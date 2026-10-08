@@ -8,9 +8,18 @@ function getBaseDir() {
   return app.isPackaged ? path.dirname(app.getPath('exe')) : __dirname
 }
 
+const releaseSmokeArg = process.argv.find(value => value.startsWith('--release-smoke='))
+const RELEASE_SMOKE_REPORT = releaseSmokeArg ? path.resolve(releaseSmokeArg.slice('--release-smoke='.length)) : null
+if (RELEASE_SMOKE_REPORT) {
+  const isolatedData = path.join(path.dirname(RELEASE_SMOKE_REPORT), 'user-data')
+  fs.mkdirSync(isolatedData, { recursive: true })
+  app.setPath('userData', isolatedData)
+}
+
 const BASE_DIR = getBaseDir()
-const DEFAULT_OUTPUT_DIR = path.join(BASE_DIR, '结果')
-const CONFIG_PATH = path.join(BASE_DIR, 'officeflow-settings.json')
+const DEFAULT_OUTPUT_DIR = RELEASE_SMOKE_REPORT ? path.join(path.dirname(RELEASE_SMOKE_REPORT), 'outputs') : path.join(app.getPath('documents'), 'OfficeFlow', '结果')
+const CONFIG_PATH = path.join(app.getPath('userData'), 'officeflow-settings.json')
+const LEGACY_CONFIG_PATH = path.join(BASE_DIR, 'officeflow-settings.json')
 const LOGIN_ITEM_NAME = 'OfficeFlow'
 const LOGIN_ITEM_ARGS = ['--hidden']
 const START_HIDDEN = process.argv.includes('--hidden')
@@ -48,8 +57,10 @@ const PYTHON_DEP_NAMES = {
 
 function loadConfig() {
   try {
-    if (fs.existsSync(CONFIG_PATH)) {
-      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
+    const configPath = fs.existsSync(CONFIG_PATH) ? CONFIG_PATH : LEGACY_CONFIG_PATH
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
     }
   } catch (e) {
     console.error('Failed to load settings:', e)
@@ -58,6 +69,7 @@ function loadConfig() {
 }
 
 function saveConfig(config) {
+  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8')
 }
 
@@ -127,8 +139,10 @@ function createWindow(showWhenReady = true) {
     frame: false,
     show: false,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      preload: path.join(__dirname, 'main-preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
       navigateOnDragDrop: false,
     },
   })
@@ -144,14 +158,6 @@ function createWindow(showWhenReady = true) {
     mainWindow.focus()
   })
   mainWindow.loadFile(path.join(__dirname, 'index.html'))
-  mainWindow.webContents.on('did-finish-load', () => {
-    try {
-      const cssPath = path.join(__dirname, 'style.css')
-      if (fs.existsSync(cssPath)) {
-        mainWindow.webContents.insertCSS(fs.readFileSync(cssPath, 'utf-8'))
-      }
-    } catch (e) { console.error('CSS injection failed:', e) }
-  })
   mainWindow.on('close', (event) => {
     if (isQuitting) return
     event.preventDefault()
@@ -794,7 +800,9 @@ function runProcess(command, args, timeoutMs) {
 async function resolvePythonCommand() {
   if (pythonCommandCache) return pythonCommandCache
 
+  const bundledPython = app.isPackaged ? path.join(process.resourcesPath, 'python', 'python.exe') : null
   const candidates = [
+    ...(bundledPython && fs.existsSync(bundledPython) ? [{ command: bundledPython, prefix: [], bundled: true }] : []),
     { command: 'python.exe', prefix: [] },
     { command: 'py.exe', prefix: ['-3'] },
   ]
@@ -836,7 +844,8 @@ async function checkPythonModules(modules, refresh) {
     ok: result.code === 0,
     missing,
     error,
-    command: python.command === 'py.exe' ? 'py -3' : 'python',
+    command: python.bundled ? '内置 Python' : (python.command === 'py.exe' ? 'py -3' : 'python'),
+    bundled: Boolean(python.bundled),
   }
   pythonModuleCache.set(key, status)
   return status
@@ -1004,12 +1013,24 @@ const tableServices = createTableServices({
 
 // ==================== IPC HANDLERS ====================
 
-ipcMain.on('window-minimize', () => mainWindow?.minimize())
-ipcMain.on('window-maximize', () => {
+function isMainWindowSender(event) {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents)
+}
+
+function handleMain(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isMainWindowSender(event)) throw new Error('Invalid IPC sender')
+    return handler(event, ...args)
+  })
+}
+
+ipcMain.on('window-minimize', (event) => { if (isMainWindowSender(event)) mainWindow.minimize() })
+ipcMain.on('window-maximize', (event) => {
+  if (!isMainWindowSender(event)) return
   if (mainWindow?.isMaximized()) mainWindow.unmaximize()
   else mainWindow?.maximize()
 })
-ipcMain.on('window-close', () => mainWindow?.close())
+ipcMain.on('window-close', (event) => { if (isMainWindowSender(event)) mainWindow.close() })
 
 ipcMain.on('drop-overlay-expand', (event) => {
   if (isDropOverlaySender(event)) expandDropOverlay()
@@ -1029,7 +1050,7 @@ ipcMain.handle('drop-overlay-submit', async (event, filePaths) => {
   return { ok: true, count: validFilePaths.length }
 })
 
-ipcMain.handle('open-file-dialog', async () => {
+handleMain('open-file-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'All Files', extensions: ['*'] }],
@@ -1037,7 +1058,7 @@ ipcMain.handle('open-file-dialog', async () => {
   return result.filePaths
 })
 
-ipcMain.handle('cancel-task', () => {
+handleMain('cancel-task', () => {
   isCancelled = true
   if (currentProcess) {
     try { currentProcess.kill() } catch (e) {}
@@ -1046,7 +1067,7 @@ ipcMain.handle('cancel-task', () => {
   return true
 })
 
-ipcMain.handle('process-files', async (event, filePaths, taskId) => {
+handleMain('process-files', async (event, filePaths, taskId) => {
   isProcessingFiles = true
   clearMainWindowReleaseTimer()
   try {
@@ -1125,12 +1146,12 @@ ipcMain.handle('process-files', async (event, filePaths, taskId) => {
   }
 })
 
-ipcMain.handle('open-output-folder', async () => {
+handleMain('open-output-folder', async () => {
   ensureDir(OUTPUT_DIR)
   return shell.openPath(OUTPUT_DIR)
 })
 
-ipcMain.handle('get-output-files', async () => {
+handleMain('get-output-files', async () => {
   if (!fs.existsSync(OUTPUT_DIR)) return []
   return fs.readdirSync(OUTPUT_DIR)
     .filter(f => !f.startsWith('.'))
@@ -1148,18 +1169,18 @@ ipcMain.handle('get-output-files', async () => {
     .sort((a, b) => b.mtime - a.mtime)
 })
 
-ipcMain.handle('open-path', async (event, targetPath) => {
+handleMain('open-path', async (event, targetPath) => {
   if (!targetPath || !fs.existsSync(targetPath)) return '文件不存在'
   return shell.openPath(targetPath)
 })
 
-ipcMain.handle('show-item-in-folder', async (event, targetPath) => {
+handleMain('show-item-in-folder', async (event, targetPath) => {
   if (!targetPath || !fs.existsSync(targetPath)) return false
   shell.showItemInFolder(targetPath)
   return true
 })
 
-ipcMain.handle('get-app-settings', async () => ({
+handleMain('get-app-settings', async () => ({
   outputDir: OUTPUT_DIR,
   defaultOutputDir: DEFAULT_OUTPUT_DIR,
   configPath: CONFIG_PATH,
@@ -1173,7 +1194,7 @@ ipcMain.handle('get-app-settings', async () => ({
   version: app.getVersion(),
 }))
 
-ipcMain.handle('set-launch-at-login', async (event, enabled) => {
+handleMain('set-launch-at-login', async (event, enabled) => {
   const result = setLaunchAtLogin(Boolean(enabled))
   if (result.ok) {
     appConfig = { ...appConfig, launchAtLogin: result.enabled }
@@ -1183,7 +1204,7 @@ ipcMain.handle('set-launch-at-login', async (event, enabled) => {
   return result
 })
 
-ipcMain.handle('set-output-dir', async () => {
+handleMain('set-output-dir', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory', 'createDirectory'],
   })
@@ -1195,7 +1216,7 @@ ipcMain.handle('set-output-dir', async () => {
   return { ok: true, outputDir: OUTPUT_DIR }
 })
 
-ipcMain.handle('reset-output-dir', async () => {
+handleMain('reset-output-dir', async () => {
   OUTPUT_DIR = DEFAULT_OUTPUT_DIR
   appConfig = { ...appConfig, outputDir: OUTPUT_DIR }
   saveConfig(appConfig)
@@ -1203,7 +1224,7 @@ ipcMain.handle('reset-output-dir', async () => {
   return { ok: true, outputDir: OUTPUT_DIR }
 })
 
-ipcMain.handle('check-python-deps', async () => {
+handleMain('check-python-deps', async () => {
   const modules = ['pypdf', 'reportlab', 'PIL', 'fitz', 'openpyxl', 'pdfplumber']
   const status = await checkPythonModules(modules, true)
   return {
@@ -1213,9 +1234,13 @@ ipcMain.handle('check-python-deps', async () => {
   }
 })
 
-ipcMain.handle('install-python-deps', async () => {
+handleMain('install-python-deps', async () => {
   const python = await resolvePythonCommand()
   if (!python) return { ok: false, error: '未找到 Python 3，无法安装依赖。' }
+  if (python.bundled) {
+    const status = await checkPythonModules(Object.keys(PYTHON_DEP_NAMES), true)
+    return { ok: status.ok, output: status.ok ? '内置依赖已就绪。' : '', error: status.ok ? '' : '内置依赖损坏，请重新安装发行版。' }
+  }
   if (!fs.existsSync(REQUIREMENTS_PATH)) return { ok: false, error: 'requirements.txt 不存在。' }
   const result = await runProcess(python.command, [...python.prefix, '-m', 'pip', 'install', '-r', REQUIREMENTS_PATH], 300000)
   pythonModuleCache.clear()
@@ -1242,6 +1267,27 @@ app.on('before-quit', () => {
 
 app.whenReady().then(async () => {
   tableServices.initialize()
+  if (RELEASE_SMOKE_REPORT) {
+    try {
+      const runSmoke = require('./release-smoke')
+      createDropOverlayWindow()
+      await createTray()
+      startDragMonitor()
+      createWindow(false)
+      await runSmoke({ app, mainWindow, dropOverlayWindow, reportPath: RELEASE_SMOKE_REPORT, getMonitorReady: () => dragMonitorAvailable })
+      stopDragMonitor()
+      tableServices.dispose()
+      if (tray && !tray.isDestroyed()) tray.destroy()
+      app.exit(0)
+    } catch (error) {
+      fs.mkdirSync(path.dirname(RELEASE_SMOKE_REPORT), { recursive: true })
+      fs.writeFileSync(RELEASE_SMOKE_REPORT, JSON.stringify({ ok: false, error: error.message }, null, 2))
+      stopDragMonitor()
+      tableServices.dispose()
+      app.exit(1)
+    }
+    return
+  }
   syncLaunchAtLogin()
   createDropOverlayWindow()
   await createTray()

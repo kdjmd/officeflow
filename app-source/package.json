@@ -6,25 +6,120 @@
   "private": true,
   "author": "kdjmd",
   "license": "AGPL-3.0-only",
-  "repository": { "type": "git", "url": "https://github.com/kdjmd/officeflow.git" },
-  "bugs": { "url": "https://github.com/kdjmd/officeflow/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kdjmd/officeflow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kdjmd/officeflow/issues"
+  },
   "homepage": "https://github.com/kdjmd/officeflow#readme",
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "build:helper": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-drag-monitor.ps1",
     "prestart": "npm run build:helper",
     "start": "electron .",
-    "test": "node ../qa/converter-security-test.js && node ../qa/table-services-smoke.js && node ../qa/table-ui-state-test.js && python ../qa/test_document_table.py",
+    "test": "node ../qa/main-preload-test.js && node ../qa/converter-security-test.js && node ../qa/table-services-smoke.js && node ../qa/table-ui-state-test.js && python ../qa/test_document_table.py",
     "benchmark": "python ../qa/local-table-benchmark.py",
-    "build:win": "npm run build:helper && electron-builder --win --dir"
+    "build:win": "npm run build:icon && npm run build:helper && electron-builder --win --dir --publish never",
+    "build:icon": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-icon.ps1",
+    "prepare:python": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-python.ps1",
+    "release:win": "npm run prepare:python && npm run build:icon && npm run build:helper && electron-builder --win nsis zip --publish never",
+    "test:release": "node ../qa/run-release-smoke.js"
   },
-  "devDependencies": { "electron": "44.7.0", "electron-builder": "26.15.3" },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
   "build": {
     "appId": "com.kdjmd.officeflow",
     "productName": "OfficeFlow",
     "asar": true,
-    "directories": { "output": "../dist" },
-    "files": ["*.js", "*.html", "*.css", "*.py", "*.ps1", "drag-monitor.exe", "requirements.txt", "package.json"],
-    "asarUnpack": ["**/*.exe", "**/*.py", "**/*.ps1", "**/requirements.txt"]
+    "directories": {
+      "output": "../dist"
+    },
+    "files": [
+      "*.js",
+      "*.html",
+      "*.css",
+      "*.py",
+      "*.ps1",
+      "drag-monitor.exe",
+      "package.json",
+      "requirements*.txt"
+    ],
+    "asarUnpack": [
+      "**/*.exe",
+      "**/*.py",
+      "**/*.ps1",
+      "**/requirements.txt"
+    ],
+    "extraResources": [
+      {
+        "from": "../vendor/python",
+        "to": "python",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!Lib/site-packages/bin/**",
+          "!pip-install-report.json"
+        ]
+      },
+      {
+        "from": "../vendor/dependencies.json",
+        "to": "dependencies.json"
+      }
+    ],
+    "extraFiles": [
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE.OfficeFlow.txt"
+      },
+      {
+        "from": "../THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "../docs/RELEASE.md",
+        "to": "README.md"
+      },
+      {
+        "from": "../docs/THIRD_PARTY_SOURCES.md",
+        "to": "THIRD_PARTY_SOURCES.md"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "../vendor/OfficeFlow.ico",
+      "artifactName": "OfficeFlow-${version}-Windows-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "license": "../LICENSE",
+      "include": "../scripts/installer.nsh",
+      "artifactName": "OfficeFlow-${version}-Setup-${arch}.${ext}"
+    }
   }
 }

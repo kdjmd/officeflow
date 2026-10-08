@@ -17,10 +17,54 @@ OfficeFlow 是面向 Windows 的本地办公文件处理工具，适合大学生
 
 ## 环境
 
-- Windows 10/11 x64，Node.js 22.12.0+，Python 3.11+（加入 PATH）。
+- Windows 10/11 x64。仅从源码运行时需要 Node.js 22.12.0+、Python 3.11+（加入 PATH）；发行版内置运行时。
 - 常规 Word/Excel/PowerPoint 转换及老式 `.doc` 读取需要安装相应 Microsoft Office 桌面应用。
 - `.docx` 文本/原生表格、文本 PDF 和文本文件的表格分析无需启动 Office。
 - 本地 OCR 需要 Windows OCR 组件及相应识别语言。
+
+## 下载发行版
+
+到 [GitHub Releases](https://github.com/kdjmd/officeflow/releases/latest) 下载 Windows x64 安装版或免安装 ZIP。发行版已内置 Python 与处理依赖；Office 格式转换仍需要本机 Microsoft Office。详见 [发行版说明](docs/RELEASE.md)。
+
+## 软件截图与使用场景
+
+以下为 Windows 发行程序的真实界面截图，文档和人员名称均为合成示例，不包含真实用户文件或 API key。
+
+### 工作台：本地办公的统一入口
+
+从工作台开始批量处理文件，查看支持的能力与环境状态。适合课程资料整理、学生会活动材料和日常办公；文档默认保留在本机。
+
+![OfficeFlow 工作台](docs/screenshots/workbench.png)
+
+### 选择文件：拖放、批量选择与按类型匹配任务
+
+将文件拖入主窗口或点击选择，随后按文件类型显示可执行操作。支持 Word、Excel、PDF、PPT 和图片等文件；Office 格式转换需要本机 Office。
+
+![OfficeFlow 文件选择页面](docs/screenshots/upload.png)
+
+### 智能安排：按文档和目标设计字段
+
+选择已有表格提取、自定义字段或智能安排。学生会报名、会议任务和物资清单只是快捷目标，输出列并不固定；用户可以描述自己的整理需求。预设匹配时优先本地处理，新格式可保存为结构预设。
+
+![OfficeFlow 文档整理配置](docs/screenshots/table-setup.png)
+
+### 表格预览：核对来源后导出
+
+预览识别出的字段与数据，检查来源和待确认项，编辑后导出 XLSX / CSV。下图的活动任务记录由本地解析生成，未调用 AI；示例中的字段不是软件固定分类。
+
+![OfficeFlow 本地整理结果预览](docs/screenshots/table-preview.png)
+
+### 设置：后台运行与可控的 AI 消耗
+
+集中管理登录启动、后台监控、结果目录和运行环境。AI 可选，只有 V3 兼容入口与官方 Flash 回退入口；密钥加密保存，可分别设置单次、单文档和单任务 Token 上限。截图展示配置界面，不代表已调用真实 AI 服务。
+
+![OfficeFlow 后台与 AI 设置](docs/screenshots/settings.png)
+
+### 桌面接收窗：不打断当前工作
+
+软件关闭主窗口后继续在托盘运行。空闲时接收窗隐藏，拖动文件到桌面右侧接收区时展开，放入后进入处理页面；普通框选不作为文件上传。正常移动文件、未投递到接收区时会在松开后收起。下图展示接收窗的展开界面。
+
+![OfficeFlow 桌面拖放接收窗](docs/screenshots/drop-panel.png)
 
 ## 从源码运行
 
@@ -41,10 +85,12 @@ npm start
 ```powershell
 npm test
 npm run benchmark
+npm run prepare:python
 npm run build:win
+npm run test:release
 ```
 
-Windows 构建位于 `dist/win-unpacked`，运行 `OfficeFlow.exe`。构建不捆绑 Python 或 Microsoft Office，需要目标机器满足上面的环境要求。测试数据为合成数据，默认测试不需要 Office；额外 Word 集成测试见 [qa/README.md](qa/README.md)。
+`prepare:python` 准备经过哈希验证的内置运行时；构建位于 `dist/win-unpacked`。生成安装版和免安装 ZIP 可运行 `npm run release:win`，验证打包后程序可运行 `npm run test:release`。构建不捆绑 Microsoft Office。默认测试不需要 Office；额外 Word 集成测试见 [qa/README.md](qa/README.md)。完整发布流程见 [发布维护指南](docs/PUBLISHING.md)。
 
 ## AI 与隐私
 

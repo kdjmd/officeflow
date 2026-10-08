@@ -84,7 +84,19 @@ const ui = factory(
   documentStub,
   { getItem() { return null }, setItem() {}, removeItem() {} },
   () => true,
-  { addEventListener() {} },
+  {
+    addEventListener() {},
+    officeFlow: {
+      send: (...args) => ipcRenderer.send(...args),
+      invoke: (...args) => ipcRenderer.invoke(...args),
+      getPathForFile: () => '',
+      subscribe(channel, callback) {
+        const listener = (event, data) => callback(data)
+        ipcRenderer.on(channel, listener)
+        return () => ipcRenderer.removeListener(channel, listener)
+      },
+    },
+  },
 )
 
 function makeAnalysis(rowCount) {

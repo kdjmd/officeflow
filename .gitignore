@@ -1,6 +1,8 @@
 # Dependencies and generated builds
 node_modules/
 dist/
+vendor/
+release-artifacts/
 out/
 app-source/drag-monitor.exe
 *.asar

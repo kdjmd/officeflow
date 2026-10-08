@@ -12,8 +12,9 @@
 
 ## 已知待改进项
 
-- 主窗口仍开启 nodeIntegration 且未开启 contextIsolation；后续需迁移到 preload 与 IPC 白名单，并完善 CSP。
+- 主窗口已关闭 nodeIntegration，启用 contextIsolation、sandbox 与 preload IPC 白名单。现有内联事件保留了 CSP 的 unsafe-inline，后续可继续拆分脚本以移除该兼容项。
 - 2026-10-08 的 npm 审计有 8 项 moderate 告警，全部属于 electron-builder 的开发/打包依赖链，0 high/critical；生产依赖审计为 0。当前 sprintf-js 没有已发布修复版，不使用不存在的版本覆盖。
-- Windows 构建尚未建立代码签名、SBOM 和自动 Release 流程。
+- Windows 发行包附带依赖版本、SHA256 校验和与发布验证报告；尚未配置商业代码签名证书。
+- 发布前以 PyPI 漏洞元数据核对内置 Python 依赖，存在已公开记录时停止发布；审计结果随包公开，不代表能识别未知漏洞。
 
 依赖由 Dependabot 定期检查。报告中请附带影响范围、复现步骤和脱敏示例。

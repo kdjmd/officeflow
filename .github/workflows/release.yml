@@ -1,0 +1,76 @@
+name: Windows release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, for example v1.1.0
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: officeflow-release-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Validate tag format
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') { throw 'Expected vMAJOR.MINOR.PATCH tag' }
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Validate source version
+        run: |
+          $version = (Get-Content app-source/package.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -ne "v$version") { throw 'Source version does not match tag' }
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app-source/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: app-source/requirements-release.txt
+      - name: Install source test dependencies
+        working-directory: app-source
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'pip failed' }
+      - name: Test source
+        working-directory: app-source
+        run: |
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Source tests failed' }
+          npm run benchmark
+          if ($LASTEXITCODE -ne 0) { throw 'Benchmark failed' }
+      - name: Build Windows release
+        working-directory: app-source
+        run: npm run release:win
+      - name: Verify actual release executable
+        working-directory: app-source
+        run: npm run test:release
+      - name: Prepare assets and checksums
+        run: node scripts/release-assets.js
+      - name: Publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $names = Get-Content release-artifacts/assets.json -Raw | ConvertFrom-Json
+          $assets = @($names | ForEach-Object { Join-Path release-artifacts $_ })
+          gh release create "$env:RELEASE_TAG" @assets --repo "$env:GITHUB_REPOSITORY" --verify-tag --title "OfficeFlow $($env:RELEASE_TAG.TrimStart('v')) - Windows x64" --notes-file docs/RELEASE.md --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
