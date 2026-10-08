@@ -1,0 +1,41 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app-source/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: app-source/requirements.txt
+      - name: Install Node dependencies
+        working-directory: app-source
+        run: npm ci --ignore-scripts
+      - name: Install Python dependencies
+        working-directory: app-source
+        run: python -m pip install -r requirements.txt
+      - name: Compile drag monitor
+        working-directory: app-source
+        run: npm run build:helper
+      - name: Run tests
+        working-directory: app-source
+        run: npm test
+      - name: Run local routing benchmark
+        working-directory: app-source
+        run: npm run benchmark

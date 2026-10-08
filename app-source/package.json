@@ -1,0 +1,30 @@
+{
+  "name": "officeflow",
+  "version": "1.1.0",
+  "description": "Local-first Windows desktop office file processor",
+  "main": "electron.js",
+  "private": true,
+  "author": "kdjmd",
+  "license": "AGPL-3.0-only",
+  "repository": { "type": "git", "url": "https://github.com/kdjmd/officeflow.git" },
+  "bugs": { "url": "https://github.com/kdjmd/officeflow/issues" },
+  "homepage": "https://github.com/kdjmd/officeflow#readme",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "build:helper": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-drag-monitor.ps1",
+    "prestart": "npm run build:helper",
+    "start": "electron .",
+    "test": "node ../qa/converter-security-test.js && node ../qa/table-services-smoke.js && node ../qa/table-ui-state-test.js && python ../qa/test_document_table.py",
+    "benchmark": "python ../qa/local-table-benchmark.py",
+    "build:win": "npm run build:helper && electron-builder --win --dir"
+  },
+  "devDependencies": { "electron": "44.7.0", "electron-builder": "26.15.3" },
+  "build": {
+    "appId": "com.kdjmd.officeflow",
+    "productName": "OfficeFlow",
+    "asar": true,
+    "directories": { "output": "../dist" },
+    "files": ["*.js", "*.html", "*.css", "*.py", "*.ps1", "drag-monitor.exe", "requirements.txt", "package.json"],
+    "asarUnpack": ["**/*.exe", "**/*.py", "**/*.ps1", "**/requirements.txt"]
+  }
+}

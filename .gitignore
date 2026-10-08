@@ -1,0 +1,32 @@
+# Dependencies and generated builds
+node_modules/
+dist/
+out/
+app-source/drag-monitor.exe
+*.asar
+*.asar.unpacked/
+*.zip
+*.exe
+*.pdb
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.venv/
+
+# Local files, application state, secrets and output
+OfficeFlow/
+结果/
+tmp/
+backup*/
+*.log
+officeflow-settings.json
+secrets*.json
+table-presets*.json
+qa/table-service-runtime-*/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+Thumbs.db
+desktop.ini

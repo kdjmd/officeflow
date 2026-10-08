@@ -1,0 +1,276 @@
+/* OfficeFlow 桌面拖放接收窗 — UI v2
+   与主界面共用同一套设计 Token（见 design-system/officeflow/MASTER.md）。
+   注意：本页 CSP 为 style-src 'self'，因此只能使用外部样式表，禁止内联 style。 */
+
+:root {
+  --brand-50: #EFF6FC;
+  --brand-100: #DCEBF9;
+  --brand-200: #BBD8F2;
+  --brand-400: #2B88D8;
+  --brand-500: #1177D4;
+  --brand-600: #0F6CBD;
+  --brand-700: #0B5A9E;
+
+  --bg-app: #E5EAF2;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #F3F7FB;
+  --bg-muted: #E9EDF3;
+  --border: #E2E8F0;
+  --border-strong: #C7D0DB;
+
+  --text: #1B1F23;
+  --text-secondary: #4A5056;
+  --text-muted: #5D6369;
+
+  --success: #0E7A0D;
+  --success-bg: #EAF6EA;
+  --success-border: #A6D8A6;
+  --danger: #C42B1C;
+  --danger-bg: #FDECEA;
+  --danger-border: #EFB0A9;
+
+  /* 与主界面保持同一套圆角与阴影刻度 */
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+  --sh-1: 0 1px 2px rgba(16, 24, 40, 0.05), 0 3px 12px rgba(16, 24, 40, 0.06);
+  --sh-panel: -14px 0 40px rgba(16, 24, 40, 0.22);
+
+  /* 与主界面同一套曲线分层：入场 ease-out，面板滑入用抽屉曲线 */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease: var(--ease-soft);
+
+  /* 三层依次到位：面板 → 内容 → 上下文标签 */
+  --beat-1: 40ms;
+  --beat-2: 70ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  color: var(--text);
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    system-ui, -apple-system, 'PingFang SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.drop-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-right: 0;
+  border-radius: var(--r-lg) 0 0 var(--r-lg);
+  /* 上浅下深：桌面窗口没有可模糊的背景，靠这点渐变 + 更深的投影读出「厚度」 */
+  background: linear-gradient(180deg, #FFFFFF 0%, #FAFCFE 100%);
+  box-shadow: var(--sh-panel);
+  opacity: 0;
+  /* 从屏幕右缘长出，所以原点就在右缘——不是中心 */
+  transform: translateX(28px) scale(0.985);
+  transform-origin: right center;
+  transition: opacity 150ms var(--ease-out), transform 220ms var(--ease-drawer);
+  pointer-events: auto;
+}
+
+body.expanded .drop-panel {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.panel-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  background: var(--brand-50);
+  color: var(--brand-600);
+}
+
+.panel-mark svg {
+  width: 14px;
+  height: 14px;
+}
+
+.panel-context {
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  background: var(--brand-50);
+  color: var(--brand-700);
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity 140ms var(--beat-2) var(--ease-out), transform 180ms var(--beat-2) var(--ease-out);
+}
+
+body.expanded .panel-context {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.drop-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 14px;
+  padding: 20px;
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
+  text-align: center;
+  opacity: 0.94;
+  transform: translateY(5px);
+  transition: border-color 140ms var(--ease-soft), background 140ms var(--ease-soft),
+    box-shadow 160ms var(--ease-soft), opacity 180ms var(--beat-1) var(--ease-out),
+    transform 220ms var(--beat-1) var(--ease-out);
+}
+
+.drop-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 10px;
+  border-radius: var(--r-pill);
+  background: var(--bg-surface);
+  color: var(--brand-600);
+  transition: transform 200ms var(--ease-out), background 140ms var(--ease-soft),
+    color 140ms var(--ease-soft);
+}
+
+.drop-ico svg {
+  width: 23px;
+  height: 23px;
+}
+
+.drop-kicker {
+  margin-bottom: 4px;
+  color: var(--brand-700);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+h1 {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.file-hint {
+  margin-top: 14px;
+  /* 该行位于品牌浅色 / 成功 / 失败底色之上，用二级文本色保证 ≥4.5:1 */
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+body.expanded .drop-content {
+  border-color: var(--brand-400);
+  background: var(--brand-50);
+  opacity: 1;
+  transform: translateY(0);
+}
+
+body.expanded .drop-ico {
+  background: var(--bg-surface);
+  color: var(--brand-600);
+}
+
+body.dragging .drop-content {
+  border-color: var(--brand-500);
+  background: var(--brand-100);
+  box-shadow: 0 0 0 4px rgba(17, 119, 212, 0.12);
+  transform: scale(1.008);
+}
+
+body.dragging .drop-ico {
+  transform: translateY(-2px);
+}
+
+body.error .drop-content {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  box-shadow: 0 0 0 4px rgba(196, 43, 28, 0.1);
+}
+
+body.error .drop-kicker,
+body.error p,
+body.error .drop-ico {
+  color: var(--danger);
+}
+
+body.success .drop-content {
+  border-color: var(--success);
+  background: var(--success-bg);
+  box-shadow: 0 0 0 4px rgba(14, 122, 13, 0.1);
+}
+
+body.success .drop-kicker,
+body.success p,
+body.success .drop-ico {
+  color: var(--success);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 比起一刀切归零，这里只去掉位移与缩放，保留淡入与色彩变化 */
+  .drop-panel,
+  .panel-context,
+  .drop-content,
+  .drop-ico {
+    transition-property: opacity, background, background-color, border-color, box-shadow, color;
+    transition-delay: 0ms;
+  }
+
+  body.dragging .drop-content,
+  body.dragging .drop-ico {
+    transform: none;
+  }
+}

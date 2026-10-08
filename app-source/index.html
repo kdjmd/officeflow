@@ -1,0 +1,2384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OfficeFlow</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="titlebar">
+      <div class="titlebar__brand">
+        <span class="app-mark" data-icon="brand" aria-hidden="true"></span>
+        <span class="titlebar__title">OfficeFlow</span>
+        <span class="titlebar__divider" aria-hidden="true"></span>
+        <span class="titlebar__subtitle">本地办公文件处理</span>
+      </div>
+      <div class="controls">
+        <button type="button" onclick="minimize()" title="最小化" aria-label="最小化" data-icon="minimize"></button>
+        <button type="button" onclick="maximize()" title="最大化" aria-label="最大化" data-icon="maximize"></button>
+        <button type="button" class="close" onclick="closeWindow()" title="隐藏到后台" aria-label="隐藏到后台" data-icon="close"></button>
+      </div>
+    </header>
+    <div class="container">
+      <nav class="sidebar" id="sidebar" aria-label="主导航">
+        <span class="nav-indicator" aria-hidden="true"></span>
+        <div class="sidebar__group">
+          <button type="button" class="nav-item active" data-page="home" onclick="showPage('home')">
+            <span class="nav-item__ico" data-icon="home" aria-hidden="true"></span><span class="nav-item__label">工作台</span>
+          </button>
+          <button type="button" class="nav-item" data-page="upload" onclick="showPage('upload')">
+            <span class="nav-item__ico" data-icon="upload" aria-hidden="true"></span><span class="nav-item__label">上传文件</span>
+          </button>
+          <button type="button" class="nav-item" data-page="outputs" onclick="showPage('outputs')">
+            <span class="nav-item__ico" data-icon="folder" aria-hidden="true"></span><span class="nav-item__label">结果文件</span>
+          </button>
+        </div>
+        <div class="nav-sep" role="separator"></div>
+        <div class="sidebar__group">
+          <button type="button" class="nav-item" data-page="history" onclick="showPage('history')">
+            <span class="nav-item__ico" data-icon="clock" aria-hidden="true"></span><span class="nav-item__label">历史记录</span>
+          </button>
+          <button type="button" class="nav-item" data-page="settings" onclick="showPage('settings')">
+            <span class="nav-item__ico" data-icon="settings" aria-hidden="true"></span><span class="nav-item__label">设置</span>
+          </button>
+        </div>
+        <div class="sidebar__spacer"></div>
+        <aside class="privacy-card">
+          <span class="privacy-card__ico" data-icon="shield" aria-hidden="true"></span>
+          <div>
+            <strong>本地优先</strong>
+            <span>文件默认不离开这台电脑</span>
+          </div>
+        </aside>
+      </nav>
+      <main class="content" id="content"></main>
+    </div>
+  </div>
+  <script>
+    const { ipcRenderer, webUtils } = require('electron');
+
+    let selectedFiles = [];
+    let selectedTask = null;
+    let currentPage = 'home';
+    let isProcessing = false;
+    let latestResult = null;
+    let outputFilesCache = [];
+    let historyCache = [];
+    let tableState = createEmptyTableState();
+    let aiSettingsCache = null;
+    let tableOperationSequence = 0;
+    let tablePresetRequestSequence = 0;
+
+    const HISTORY_KEY = 'officeflow.history';
+
+    // ---------------------------------------------------------------------
+    // 图标系统：全部使用内联 SVG（Lucide 风格，1.7 描边），不使用文字符号或 emoji。
+    // ---------------------------------------------------------------------
+    const ICONS = {
+      brand: '<path d="M13.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13.5 3.5V9H19"/><path d="M8.5 13h7M8.5 16.5h4.5"/>',
+      home: '<path d="M3 10.5 12 3.2l9 7.3"/><path d="M5.6 9.4V19a2 2 0 0 0 2 2h8.8a2 2 0 0 0 2-2V9.4"/>',
+      upload: '<path d="M12 16.5V4.5"/><path d="M8 8.5 12 4.5l4 4"/><path d="M4.5 15v3.5a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5V15"/>',
+      uploadCloud: '<path d="M7 17.5a4.5 4.5 0 0 1-.6-8.96A5.5 5.5 0 0 1 17.3 8.2a4.15 4.15 0 0 1-.5 8.3"/>',
+      download: '<path d="M12 4v11"/><path d="M8 11l4 4 4-4"/><path d="M4.5 19.5h15"/>',
+      folder: '<path d="M3.2 7.6A2 2 0 0 1 5.2 5.6h3.5a2 2 0 0 1 1.6.8l.9 1.2h7.6a2 2 0 0 1 2 2v6.8a2 2 0 0 1-2 2H5.2a2 2 0 0 1-2-2z"/>',
+      clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.1 2"/>',
+      settings: '<circle cx="12" cy="12" r="3.1"/><path d="M19.2 14.6a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.12a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.12A1.7 1.7 0 0 0 4.68 8.8a1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 1 1 7.11 4.04l.06.06a1.7 1.7 0 0 0 1.87.34H9.1a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.12a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.06a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.12a1.7 1.7 0 0 0-1.56 1.03z"/>',
+      minimize: '<path d="M5.5 12h13"/>',
+      maximize: '<rect x="6.2" y="6.2" width="11.6" height="11.6" rx="1.8"/>',
+      close: '<path d="M6.8 6.8 17.2 17.2M17.2 6.8 6.8 17.2"/>',
+      check: '<path d="M4.8 12.6 9.6 17.4 19.2 7"/>',
+      checkCircle: '<circle cx="12" cy="12" r="8.6"/><path d="M8.2 12.3l2.7 2.7 5-5.4"/>',
+      alert: '<path d="M10.3 4.4 2.9 17.3A1.8 1.8 0 0 0 4.5 20h15a1.8 1.8 0 0 0 1.6-2.7L13.7 4.4a1.8 1.8 0 0 0-3.4 0z"/><path d="M12 9.4v4.2M12 16.9h.01"/>',
+      alertCircle: '<circle cx="12" cy="12" r="8.6"/><path d="M12 7.6v5M12 16.2h.01"/>',
+      info: '<circle cx="12" cy="12" r="8.6"/><path d="M12 16.4v-5M12 8.1h.01"/>',
+      refresh: '<path d="M20.2 11.6A8.3 8.3 0 0 0 6.4 6.1L3.9 8.6"/><path d="M3.6 4.4v4.4h4.4"/><path d="M3.8 12.4a8.3 8.3 0 0 0 13.8 5.5l2.5-2.5"/><path d="M20.4 19.6v-4.4h-4.4"/>',
+      trash: '<path d="M4 7h16"/><path d="M9.6 7V5.3A1.3 1.3 0 0 1 10.9 4h2.2a1.3 1.3 0 0 1 1.3 1.3V7"/><path d="M6.6 7l.8 11.8A1.7 1.7 0 0 0 9.1 20.4h5.8a1.7 1.7 0 0 0 1.7-1.6L17.4 7"/>',
+      external: '<path d="M14 4h6v6"/><path d="M20 4l-8.6 8.6"/><path d="M18.4 14.4V19a1.6 1.6 0 0 1-1.6 1.6H5A1.6 1.6 0 0 1 3.4 19V7.2A1.6 1.6 0 0 1 5 5.6h4.6"/>',
+      arrowLeft: '<path d="M19 12H5"/><path d="M11 6l-6 6 6 6"/>',
+      arrowRight: '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
+      chevronLeft: '<path d="M14.5 5.8 8.3 12l6.2 6.2"/>',
+      chevronRight: '<path d="M9.5 5.8 15.7 12l-6.2 6.2"/>',
+      sparkles: '<path d="M11.6 3.6l1.7 4.2 4.2 1.7-4.2 1.7-1.7 4.2-1.7-4.2L5.7 9.5l4.2-1.7z"/><path d="M18.4 15.4l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>',
+      shield: '<path d="M12 3.4 5.2 6.1v5.3c0 4 2.9 7.6 6.8 8.9 3.9-1.3 6.8-4.9 6.8-8.9V6.1z"/><path d="M9.2 12l2.1 2.1 3.9-4.2"/>',
+      bolt: '<path d="M13.4 3 5.6 13.4h5.2L10.3 21l8.1-10.6h-5.3z"/>',
+      layers: '<path d="M12 3.6 3.6 8 12 12.4 20.4 8z"/><path d="M3.6 12.4 12 16.8l8.4-4.4"/><path d="M3.6 16.6 12 21l8.4-4.4"/>',
+      file: '<path d="M13.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13.5 3.5V9H19"/>',
+      cpu: '<rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.2"/><rect x="10" y="10" width="4" height="4" rx="1"/><path d="M9.6 3.4v3M14.4 3.4v3M9.6 17.6v3M14.4 17.6v3M3.4 9.6h3M3.4 14.4h3M17.6 9.6h3M17.6 14.4h3"/>',
+      database: '<ellipse cx="12" cy="6.4" rx="7.4" ry="3"/><path d="M4.6 6.4v11.2c0 1.7 3.3 3 7.4 3s7.4-1.3 7.4-3V6.4"/><path d="M4.6 12c0 1.7 3.3 3 7.4 3s7.4-1.3 7.4-3"/>',
+      lock: '<rect x="4.6" y="10.4" width="14.8" height="9.6" rx="2.2"/><path d="M8.2 10.4V7.8a3.8 3.8 0 0 1 7.6 0v2.6"/>',
+      sliders: '<path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7.5" cy="17" r="2"/>',
+      list: '<path d="M8.4 6.6h11.2M8.4 12h11.2M8.4 17.4h11.2"/><path d="M4.4 6.6h.01M4.4 12h.01M4.4 17.4h.01"/>',
+      target: '<circle cx="12" cy="12" r="7.4"/><circle cx="12" cy="12" r="2.6"/><path d="M12 1.9v2.7M12 19.4v2.7M1.9 12h2.7M19.4 12h2.7"/>',
+      inbox: '<path d="M3.8 13.4 6.4 5.2a1.6 1.6 0 0 1 1.5-1.1h8.2a1.6 1.6 0 0 1 1.5 1.1l2.6 8.2v3.9a2 2 0 0 1-2 2H5.8a2 2 0 0 1-2-2z"/><path d="M3.8 13.4h4.3l.9 2.4h6l.9-2.4h4.3"/>',
+      table: '<rect x="3.4" y="4.6" width="17.2" height="14.8" rx="2.2"/><path d="M3.4 9.6h17.2M3.4 14.4h17.2M9.6 4.6v14.8"/>',
+      toPdf: '<path d="M13.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13.5 3.5V9H19"/><path d="M12 12.6v6M9.6 16l2.4 2.4L14.4 16"/>',
+      textOut: '<path d="M13.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13.5 3.5V9H19"/><path d="M8.4 13.2h7.2M8.4 16.6h4.6"/>',
+      sheetCsv: '<rect x="3.4" y="4.6" width="13" height="14.8" rx="2.2"/><path d="M3.4 9.6h13M3.4 14.4h13M9.9 9.6v9.8"/><path d="M18.4 12h3.2M19.9 10.5 21.6 12l-1.7 1.5"/>',
+      imageStack: '<rect x="7.6" y="3.4" width="13" height="13" rx="2.2"/><rect x="3.4" y="7.6" width="13" height="13" rx="2.2"/>',
+      merge: '<path d="M12 3.4 3.6 7.8 12 12.2l8.4-4.4z"/><path d="M3.6 12.4 12 16.8l8.4-4.4"/><path d="M12 12.2v9"/>',
+      split: '<circle cx="6.2" cy="6.2" r="2.6"/><circle cx="6.2" cy="17.8" r="2.6"/><path d="M19.8 4.2 8.4 15.6"/><path d="M14.6 14.4l5.2 5.4"/><path d="M8.4 8.4 12 12"/>',
+      watermark: '<path d="M12 3.4c-3.2 3.6-5.4 6.4-5.4 9.3a5.4 5.4 0 0 0 10.8 0c0-2.9-2.2-5.7-5.4-9.3z"/>',
+      compress: '<path d="M4 14.2h5.4V20"/><path d="M20 9.8h-5.4V4"/><path d="M14.6 9.8 20.6 3.8"/><path d="M3.4 20.6l6-6"/>',
+      rotate: '<path d="M20.4 12a8.4 8.4 0 1 1-2.6-6.1"/><path d="M20.4 4.4v5.2h-5.2"/>',
+      scan: '<path d="M3.4 8.6V6a2.6 2.6 0 0 1 2.6-2.6h2.6"/><path d="M15.4 3.4H18A2.6 2.6 0 0 1 20.6 6v2.6"/><path d="M20.6 15.4V18a2.6 2.6 0 0 1-2.6 2.6h-2.6"/><path d="M8.6 20.6H6A2.6 2.6 0 0 1 3.4 18v-2.6"/><path d="M3.4 12h17.2"/>',
+      imagesPdf: '<rect x="3.2" y="4" width="17.6" height="12.6" rx="2.2"/><circle cx="8.4" cy="8.8" r="1.5"/><path d="M4.2 14.4 8 11l3.2 2.8L14 11.4l5 4.2"/><path d="M12 18v3.4M9.9 19.7 12 21.6l2.1-1.9"/>',
+      swap: '<path d="M4 8.6h13.4"/><path d="M14.4 5.6 17.4 8.6 14.4 11.6"/><path d="M20 15.4H6.6"/><path d="M9.6 12.4 6.6 15.4 9.6 18.4"/>',
+      scaling: '<path d="M20.6 3.4 9.4 14.6"/><path d="M12.6 3.4H3.4v18h18v-9.2"/><path d="M16.4 3.4h4.2v4.2"/><path d="M14.6 15.4H8.6v-6"/>',
+      image: '<rect x="3.2" y="4.4" width="17.6" height="15.2" rx="2.2"/><circle cx="8.6" cy="9.6" r="1.6"/><path d="M4 16.6 9 12l3.4 3 3.2-2.8 5 4.6"/>',
+      contrast: '<circle cx="12" cy="12" r="8.6"/><path d="M12 3.4v17.2a8.6 8.6 0 0 0 0-17.2z" fill="currentColor" stroke="none"/>',
+      eye: '<path d="M2.4 12S5.9 5.6 12 5.6 21.6 12 21.6 12 18.1 18.4 12 18.4 2.4 12 2.4 12z"/><circle cx="12" cy="12" r="3.2"/>',
+      play: '<path d="M6.8 4.6 19 12 6.8 19.4z"/>',
+      wand: '<path d="M4 20 14.6 9.4"/><path d="M16.6 3.4l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z"/><path d="M6.4 4.4l.6 1.5 1.5.6-1.5.6-.6 1.5-.6-1.5L4.3 6.5l1.5-.6z"/>',
+      puzzle: '<path d="M9.4 4.4h2.2a1.3 1.3 0 0 1 2.6 0h2.2a1.4 1.4 0 0 1 1.4 1.4v2.4a1.3 1.3 0 0 0 0 2.6v2.4a1.4 1.4 0 0 1-1.4 1.4h-2.8v1.8a1.6 1.6 0 0 1-3.2 0v-1.8H6.6a1.4 1.4 0 0 1-1.4-1.4v-2.6a1.3 1.3 0 0 0 0-2.6V5.8a1.4 1.4 0 0 1 1.4-1.4z"/>',
+    };
+
+    const TASK_ICONS = {
+      'document-to-table': 'table',
+      'word-to-pdf': 'toPdf',
+      'word-extract': 'textOut',
+      'excel-csv': 'sheetCsv',
+      'excel-pdf': 'toPdf',
+      'pdf-text': 'textOut',
+      'pdf-images': 'imageStack',
+      'pdf-merge': 'merge',
+      'pdf-split': 'split',
+      'pdf-watermark': 'watermark',
+      'pdf-compress': 'compress',
+      'pdf-rotate': 'rotate',
+      'ppt-pdf': 'toPdf',
+      'ppt-images': 'imageStack',
+      'ocr-text': 'scan',
+      'images-to-pdf': 'imagesPdf',
+      'image-compress': 'compress',
+      'image-convert': 'swap',
+      'image-resize': 'scaling',
+      'image-webp': 'image',
+      'image-grayscale': 'contrast',
+    };
+
+    const FLOW_STEPS = [
+      { label: '选择文件', page: 'upload' },
+      { label: '选择任务', page: 'tasks' },
+      { label: '查看结果', page: '' },
+    ];
+
+    function icon(name, className = 'ico') {
+      const body = ICONS[name] || ICONS.file;
+      return `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
+    }
+
+    function taskIcon(taskId, className = 'ico') {
+      return icon(TASK_ICONS[taskId] || 'file', className);
+    }
+
+    function hydrateIcons(root) {
+      const scope = root || document;
+      if (!scope || typeof scope.querySelectorAll !== 'function') return;
+      scope.querySelectorAll('[data-icon]').forEach(element => {
+        if (element.dataset && element.dataset.iconReady === '1') return;
+        element.innerHTML = icon(element.getAttribute('data-icon'));
+        if (element.dataset) element.dataset.iconReady = '1';
+      });
+    }
+
+    function renderStepper(activeIndex) {
+      return `<ol class="stepper" aria-label="处理流程">${FLOW_STEPS.map((step, index) => {
+        const state = index === activeIndex ? 'current' : index < activeIndex ? 'done' : 'todo';
+        const mark = index < activeIndex ? icon('check') : String(index + 1);
+        const label = `<span class="stepper__label">${escapeHtml(step.label)}</span>`;
+        if (index < activeIndex && step.page) {
+          return `<li class="stepper__item ${state}"><button type="button" class="stepper__btn" onclick="showPage('${step.page}')"><span class="stepper__mark">${mark}</span>${label}</button></li>`;
+        }
+        return `<li class="stepper__item ${state}"><span class="stepper__mark">${mark}</span>${label}</li>`;
+      }).join('')}</ol>`;
+    }
+
+    function emptyState(iconName, title, description = '', action = '') {
+      return `
+        <div class="empty-state">
+          <span class="empty-state__ico">${icon(iconName)}</span>
+          <strong class="empty-state__title">${escapeHtml(title)}</strong>
+          ${description ? `<p class="empty-state__desc">${escapeHtml(description)}</p>` : ''}
+          ${action ? `<div class="empty-state__action">${action}</div>` : ''}
+        </div>`;
+    }
+
+    const allTasks = [
+      { id: 'document-to-table', icon: 'XLS', name: '整理为表格', desc: '本地优先提取结构化数据', types: ['docx', 'doc', 'pdf', 'txt', 'md'], color: '#217346', batch: true, workbench: true },
+      { id: 'word-to-pdf', icon: 'PDF', name: '转为PDF', desc: 'Word转PDF', types: ['docx', 'doc'], color: '#2B579A' },
+      { id: 'word-extract', icon: 'TXT', name: '提取文本', desc: '提取文字内容', types: ['docx', 'doc'], color: '#2B579A' },
+      { id: 'excel-csv', icon: 'CSV', name: '转CSV', desc: 'Excel转CSV', types: ['xlsx', 'xls'], color: '#217346' },
+      { id: 'excel-pdf', icon: 'PDF', name: '转PDF', desc: 'Excel转PDF', types: ['xlsx', 'xls'], color: '#217346' },
+      { id: 'pdf-text', icon: 'TXT', name: '提取文本', desc: 'PDF提取文字', types: ['pdf'], color: '#D13438' },
+      { id: 'pdf-images', icon: 'PNG', name: '转图片', desc: '按页导出PNG', types: ['pdf'], color: '#D13438' },
+      { id: 'pdf-merge', icon: '++', name: '合并PDF', desc: '多个PDF合并为一', types: ['pdf'], color: '#D13438', batch: true },
+      { id: 'pdf-split', icon: '--', name: '拆分PDF', desc: 'PDF按页拆分', types: ['pdf'], color: '#D13438' },
+      { id: 'pdf-watermark', icon: 'WM', name: '加水印', desc: 'PDF添加水印', types: ['pdf'], color: '#D13438' },
+      { id: 'pdf-compress', icon: 'ZIP', name: '压缩PDF', desc: '减小PDF体积', types: ['pdf'], color: '#D13438' },
+      { id: 'pdf-rotate', icon: '90', name: '旋转页面', desc: '全部页面顺时针90°', types: ['pdf'], color: '#D13438' },
+      { id: 'ppt-pdf', icon: 'PDF', name: '转PDF', desc: 'PPT转PDF', types: ['pptx', 'ppt'], color: '#B7472A' },
+      { id: 'ppt-images', icon: 'IMG', name: '导出图片', desc: 'PPT导出图片', types: ['pptx', 'ppt'], color: '#B7472A' },
+      { id: 'ocr-text', icon: 'OCR', name: '文字识别', desc: '图片OCR识别', types: ['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'], color: '#0078D4' },
+      { id: 'images-to-pdf', icon: 'PDF', name: '图片转PDF', desc: '多图合并为PDF', types: ['png', 'jpg', 'jpeg', 'bmp', 'webp'], color: '#0078D4', batch: true },
+      { id: 'image-compress', icon: 'ZIP', name: '压缩图片', desc: '减小图片体积', types: ['png', 'jpg', 'jpeg', 'bmp', 'webp'], color: '#0078D4' },
+      { id: 'image-convert', icon: 'CVT', name: '格式转换', desc: 'PNG/JPG互转', types: ['png', 'jpg', 'jpeg', 'bmp', 'webp'], color: '#0078D4' },
+      { id: 'image-resize', icon: 'RZ', name: '调整大小', desc: '缩放为原尺寸一半', types: ['png', 'jpg', 'jpeg', 'bmp', 'webp'], color: '#0078D4' },
+      { id: 'image-webp', icon: 'WEBP', name: '转WebP', desc: '生成WebP图片', types: ['png', 'jpg', 'jpeg', 'bmp'], color: '#0078D4' },
+      { id: 'image-grayscale', icon: 'GRAY', name: '转灰度', desc: '生成黑白图片', types: ['png', 'jpg', 'jpeg', 'bmp', 'webp'], color: '#0078D4' },
+    ];
+
+    const studentTableGoals = [
+      { label: '活动报名 / 签到', goal: '整理活动报名与签到信息，按当前文档内容形成便于核对和跟进的记录' },
+      { label: '会议纪要 → 任务', goal: '把会议纪要整理成可执行的任务安排，保留责任、时间和上下文信息' },
+      { label: '经费 / 报销', goal: '整理经费申请与报销材料，便于核对项目、凭证、金额和处理进度' },
+      { label: '成员排班', goal: '根据现有名单和时间安排整理成员排班，突出冲突、空缺和待确认事项' },
+      { label: '志愿服务', goal: '整理志愿服务报名、参与和时长记录，便于后续统计与证明材料核验' },
+      { label: '评奖材料', goal: '汇总评奖评优材料中的事实和证明信息，形成便于审核的结构化清单' },
+    ];
+
+    function createEmptyTableState() {
+      return {
+        stage: 'configure',
+        mode: 'auto',
+        customFields: '',
+        tableGoal: '',
+        useAi: false,
+        useAiBeforeSmart: false,
+        jobId: null,
+        progress: 0,
+        progressText: '准备分析',
+        columns: [],
+        rows: [],
+        totalRows: 0,
+        page: 1,
+        pageSize: 50,
+        warnings: [],
+        errors: [],
+        stats: {},
+        tableCount: 0,
+        tableTitle: '',
+        tableId: '',
+        suggestedFields: [],
+        suggestedSchema: { tableTitle: '', rowDefinition: '', fields: [] },
+        schemaProvider: '',
+        aiSkipped: false,
+        aiSkipReason: '',
+        presetMatchedInitially: false,
+        aiUsedAfterPresetMatch: false,
+        presets: [],
+        presetsLoaded: false,
+        presetsLoading: false,
+        selectedPresetId: '',
+        selectedPresetSchema: null,
+        presetNotice: null,
+        presetSaveNotice: null,
+        exporting: false,
+        enhancing: false,
+        dirty: false,
+        busyOperation: null,
+        operationToken: 0,
+      };
+    }
+
+    function beginTableOperation(operation) {
+      if (tableState.busyOperation) return 0;
+      const token = ++tableOperationSequence;
+      tableState.busyOperation = operation;
+      tableState.operationToken = token;
+      return token;
+    }
+
+    function isTableOperationCurrent(token, operation, stage) {
+      return Boolean(token)
+        && tableState.operationToken === token
+        && tableState.busyOperation === operation
+        && currentPage === 'table-workbench'
+        && (!stage || tableState.stage === stage);
+    }
+
+    function finishTableOperation(token, operation) {
+      if (tableState.operationToken !== token || tableState.busyOperation !== operation) return false;
+      tableState.busyOperation = null;
+      tableState.operationToken = 0;
+      tableState.exporting = false;
+      tableState.enhancing = false;
+      if (operation === 'analyze') isProcessing = false;
+      return true;
+    }
+
+    function invalidateTableOperation(cancelBackend = false) {
+      const hadOperation = Boolean(tableState.busyOperation);
+      const jobId = tableState.jobId;
+      tableOperationSequence += 1;
+      tablePresetRequestSequence += 1;
+      tableState.operationToken = 0;
+      tableState.busyOperation = null;
+      tableState.exporting = false;
+      tableState.enhancing = false;
+      isProcessing = false;
+      if (cancelBackend && (hadOperation || jobId)) {
+        ipcRenderer.invoke('table-cancel', { jobId: jobId || '' })
+          .catch(error => console.warn('Table cancellation failed:', cleanTableMessage(error)));
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getFileName(filePath) {
+      return String(filePath || '').split(/[/\\]/).pop();
+    }
+
+    function getFileExt(filePath) {
+      const name = getFileName(filePath);
+      return name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+    }
+
+    function dedupeFiles(files) {
+      return [...new Set([...selectedFiles, ...files].filter(Boolean))];
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let size = bytes;
+      let unit = 0;
+      while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit += 1;
+      }
+      return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function formatDate(value) {
+      return new Date(value).toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function getTask(taskId) {
+      return allTasks.find(t => t.id === taskId);
+    }
+
+    function getFilteredTasks() {
+      if (selectedFiles.length === 0) return allTasks;
+      const exts = [...new Set(selectedFiles.map(f => getFileExt(f)))];
+      const matched = allTasks.filter(t => t.types.some(type => exts.includes(type)));
+      return matched.length > 0 ? matched : [];
+    }
+
+    function getExtColor(ext) {
+      const map = {
+        docx: '#2B579A', doc: '#2B579A',
+        xlsx: '#217346', xls: '#217346',
+        pdf: '#D13438',
+        pptx: '#B7472A', ppt: '#B7472A',
+        png: '#0078D4', jpg: '#0078D4', jpeg: '#0078D4', bmp: '#0078D4',
+        tiff: '#0078D4', webp: '#0078D4',
+        csv: '#217346', txt: '#5B6470', md: '#5B6470',
+      };
+      return map[ext] || '#6B7177';
+    }
+
+    function getExtIcon(ext) {
+      const map = {
+        docx: 'file', doc: 'file',
+        xlsx: 'table', xls: 'table', csv: 'table',
+        pdf: 'toPdf',
+        pptx: 'imageStack', ppt: 'imageStack',
+        txt: 'textOut', md: 'textOut',
+      };
+      return map[ext] || 'image';
+    }
+
+    // 徽标文字用的加深色：原类型色在白底上对比度不足 4.5:1（如 PDF 红仅 4.11），
+    // 这里使用同色系加深版本，保证小字号文字达到 AA。
+    function getExtInk(ext) {
+      const map = {
+        docx: '#24487F', doc: '#24487F',
+        xlsx: '#186040', xls: '#186040', csv: '#186040',
+        pdf: '#A4262C',
+        pptx: '#9A3A22', ppt: '#9A3A22',
+        png: '#0F6CBD', jpg: '#0F6CBD', jpeg: '#0F6CBD', bmp: '#0F6CBD',
+        tiff: '#0F6CBD', webp: '#0F6CBD',
+        txt: '#4A5056', md: '#4A5056',
+      };
+      return map[ext] || '#4A5056';
+    }
+
+    function minimize() { ipcRenderer.send('window-minimize'); }
+    function maximize() { ipcRenderer.send('window-maximize'); }
+    function closeWindow() { ipcRenderer.send('window-close'); }
+
+    /* 流程顺序，用来判断页面是「往前走」还是「往回退」。
+       侧栏独立页面（结果文件 / 历史记录 / 设置）不在流程里，标记为 lateral。 */
+    const PAGE_RANK = {
+      home: 0, upload: 1, tasks: 2, 'table-workbench': 3, processing: 4, result: 5,
+    };
+
+    function pageDirection(from, to) {
+      if (!from || from === to) return '';
+      const a = PAGE_RANK[from];
+      const b = PAGE_RANK[to];
+      if (a === undefined || b === undefined) return 'lateral';
+      return b > a ? 'forward' : 'back';
+    }
+
+    /* 进度条只推 transform，不再改 width（改宽度会让浏览器每帧重排）。
+       见 style.css 的 .progress-fill —— 它读的是 --p（0~1）。 */
+    function setProgressFill(fill, percent) {
+      if (!fill) return;
+      const p = Math.max(0, Math.min(100, Number(percent) || 0));
+      fill.style.setProperty('--p', String(p / 100));
+    }
+
+    function setActiveNav(page) {
+      document.querySelectorAll('.nav-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.page === page);
+      });
+      moveNavIndicator();
+    }
+
+    function moveNavIndicator() {
+      const nav = document.getElementById('sidebar');
+      const indicator = nav ? nav.querySelector('.nav-indicator') : null;
+      if (!indicator) return;
+      const active = nav.querySelector('.nav-item.active');
+      if (!active) {
+        indicator.classList.remove('is-ready');
+        return;
+      }
+      const navTop = nav.getBoundingClientRect().top;
+      const itemTop = active.getBoundingClientRect().top;
+      const y = itemTop - navTop + (active.offsetHeight - indicator.offsetHeight) / 2;
+      if (indicator.dataset.placed !== '1') {
+        /* 首次定位不播动画：否则启动时指示条会从侧栏顶端滑下来 */
+        indicator.style.transition = 'none';
+        indicator.style.setProperty('--nav-y', `${y}px`);
+        indicator.classList.add('is-ready');
+        void indicator.offsetHeight;
+        indicator.style.transition = '';
+        indicator.dataset.placed = '1';
+        return;
+      }
+      indicator.style.setProperty('--nav-y', `${y}px`);
+      indicator.classList.add('is-ready');
+    }
+
+    function showPage(page, data) {
+      if (currentPage === 'table-workbench' && page !== 'table-workbench') {
+        invalidateTableOperation(true);
+      }
+      const direction = pageDirection(currentPage, page);
+      currentPage = page;
+      setActiveNav(page);
+      const content = document.getElementById('content');
+      /* 写在容器上供 CSS 选择：forward / back / lateral / ''（同页重渲染不转场） */
+      content.dataset.nav = direction;
+      if (page === 'home') renderHome(content);
+      else if (page === 'upload') renderUpload(content);
+      else if (page === 'tasks') renderTasks(content);
+      else if (page === 'table-workbench') renderTableWorkbench(content);
+      else if (page === 'processing') renderProcessing(content);
+      else if (page === 'result') renderResult(content, data || latestResult);
+      else if (page === 'outputs') renderOutputs(content);
+      else if (page === 'history') renderHistory(content);
+      else if (page === 'settings') renderSettings(content);
+    }
+
+    function renderHome(el) {
+      const features = [
+        { icon: 'puzzle', title: '21 种处理能力', desc: 'Word、Excel、PDF、PPT、图片与文本互转，覆盖日常办公场景。' },
+        { icon: 'shield', title: '本地优先', desc: '默认只在这台电脑上解析文件，AI 仅在确有必要时按预算参与。' },
+        { icon: 'uploadCloud', title: '拖放即用', desc: '拖到窗口或桌面右侧接收区即可开始，支持批量选择。' },
+        { icon: 'table', title: '结果可编辑', desc: '整理出的表格可直接改单元格，再导出为可用的 XLSX / CSV。' },
+      ];
+      el.innerHTML = `
+        <div class="page page--home">
+          <section class="hero">
+            <span class="hero__badge">${icon('bolt')}本地处理 · 0 上传起步</span>
+            <h1 class="hero__title">欢迎使用 OfficeFlow</h1>
+            <p class="hero__subtitle">轻量级桌面办公文件处理工具。选择文件、挑选任务、拿到结果，全程在这台电脑上完成。</p>
+            <div class="hero__actions">
+              <button class="btn btn--lg" onclick="showPage('upload')">${icon('upload')}开始处理文件</button>
+              <button class="btn-secondary btn--lg" onclick="showPage('outputs')">${icon('folder')}查看结果文件</button>
+            </div>
+          </section>
+          <section class="feature-grid">
+            ${features.map((item, i) => `
+              <article class="feature-card" style="--i:${i}">
+                <span class="feature-card__ico">${icon(item.icon)}</span>
+                <h2 class="feature-card__title">${escapeHtml(item.title)}</h2>
+                <p class="feature-card__desc">${escapeHtml(item.desc)}</p>
+              </article>`).join('')}
+          </section>
+          <section class="card">
+            <div class="section-head">
+              <div>
+                <h2>三步完成处理</h2>
+                <p class="setting-desc">从选择文件到拿到结果，通常用不上一分钟。</p>
+              </div>
+            </div>
+            <ol class="flow-steps">
+              <li class="flow-step">
+                <span class="flow-step__no">1</span>
+                <div><strong>上传文件</strong><span>拖拽或点击选择，可一次加入多个文件</span></div>
+              </li>
+              <li class="flow-step">
+                <span class="flow-step__no">2</span>
+                <div><strong>选择任务</strong><span>系统按文件类型自动列出可用操作</span></div>
+              </li>
+              <li class="flow-step">
+                <span class="flow-step__no">3</span>
+                <div><strong>查看结果</strong><span>直接打开文件或定位到输出目录</span></div>
+              </li>
+            </ol>
+          </section>
+        </div>`;
+    }
+
+    /* animate=false 用于「就地刷新」：列表增删一项、切换选中态时整页重渲染，
+       此时不该重播入场动画（连点任务卡会看到整屏跳一下）。
+       只在真正进入这个页面时才有入场。 */
+    function renderUpload(el, animate = true) {
+      let fileListHtml = '';
+      if (selectedFiles.length > 0) {
+        fileListHtml = `
+          <section class="card file-card">
+            <div class="section-head">
+              <div>
+                <h2>已选择文件</h2>
+                <p class="setting-desc">共 ${selectedFiles.length} 个文件，确认无误后进入下一步。</p>
+              </div>
+              <button class="btn-secondary compact" onclick="clearFiles()">${icon('trash')}清空</button>
+            </div>
+            <ul class="file-list">
+              ${selectedFiles.map((f, i) => {
+                const name = getFileName(f);
+                const ext = getFileExt(f);
+                const color = getExtColor(ext);
+                return `
+                <li class="file-item" style="--i:${i}">
+                  <span class="file-item__ico" style="color:${color};background:${color}1F">${icon(getExtIcon(ext))}</span>
+                  <span class="file-item__name" title="${escapeHtml(f)}">${escapeHtml(name)}</span>
+                  <span class="ext-badge" style="color:${getExtInk(ext)};background:${color}1F">${escapeHtml(ext.toUpperCase() || 'FILE')}</span>
+                  <button type="button" class="icon-btn danger" onclick="removeFile(${i})" title="移除" aria-label="移除 ${escapeHtml(name)}">${icon('close')}</button>
+                </li>`;
+              }).join('')}
+            </ul>
+          </section>`;
+      }
+
+      const filtered = getFilteredTasks();
+      let taskHint = '';
+      if (selectedFiles.length > 0) {
+        if (filtered.length > 0) {
+          taskHint = `<div class="notice success">${icon('checkCircle')}<span>已识别可用操作 ${filtered.length} 种，点击下方按钮继续。</span></div>`;
+        } else {
+          taskHint = `<div class="notice error">${icon('alertCircle')}<span>当前文件类型暂不支持，请更换为 Word、Excel、PDF、PPT、文本或图片文件。</span></div>`;
+        }
+      }
+
+      el.innerHTML = `
+        <div class="page${animate ? '' : ' no-enter'}">
+          ${renderStepper(0)}
+          <div class="page-head">
+            <div>
+              <h1>上传文件</h1>
+              <p class="page-subtitle">拖拽或点击选择文件，支持一次加入多个。</p>
+            </div>
+          </div>
+          <div class="drop-zone" id="dropZone" role="button" tabindex="0" aria-label="点击或拖拽文件到此处" onclick="selectFiles()" onkeydown="activateDropZone(event)">
+            <span class="drop-zone__ico">${icon('uploadCloud')}</span>
+            <p class="drop-zone__title">点击或拖拽文件到此处</p>
+            <p class="drop-zone__hint">松开鼠标后自动识别可用操作</p>
+            <div class="format-chips" aria-hidden="true">
+              <span class="format-chip">Word</span>
+              <span class="format-chip">Excel</span>
+              <span class="format-chip">PDF</span>
+              <span class="format-chip">PPT</span>
+              <span class="format-chip">文本</span>
+              <span class="format-chip">图片</span>
+            </div>
+          </div>
+          ${fileListHtml}
+          ${taskHint}
+          <div class="actions">
+            <button class="btn" onclick="showPage('tasks')" ${selectedFiles.length === 0 ? 'disabled' : ''}>
+              下一步：选择任务${icon('arrowRight')}
+            </button>
+          </div>
+        </div>`;
+
+      setupDragDrop();
+    }
+
+    function setupDragDrop() {
+      const dropZone = document.getElementById('dropZone');
+      if (!dropZone) return;
+
+      ['dragenter', 'dragover'].forEach(evt => {
+        dropZone.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.add('drag-over');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(evt => {
+        dropZone.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.remove('drag-over');
+        });
+      });
+
+      dropZone.addEventListener('drop', (e) => {
+        const files = Array.from(e.dataTransfer.files).map((file) => {
+          if (webUtils?.getPathForFile) return webUtils.getPathForFile(file);
+          return file.path;
+        });
+        if (files.length > 0) {
+          selectedFiles = dedupeFiles(files);
+          selectedTask = null;
+          showPage('upload');
+        }
+      });
+    }
+
+    function activateDropZone(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      selectFiles();
+    }
+
+    function clearFiles() {
+      selectedFiles = [];
+      selectedTask = null;
+      renderUpload(document.getElementById('content'), false);
+    }
+
+    function removeFile(index) {
+      selectedFiles.splice(index, 1);
+      selectedTask = null;
+      renderUpload(document.getElementById('content'), false);
+    }
+
+    async function selectFiles() {
+      try {
+        const files = await ipcRenderer.invoke('open-file-dialog');
+        if (files && files.length > 0) {
+          selectedFiles = dedupeFiles(files);
+          selectedTask = null;
+          renderUpload(document.getElementById('content'));
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function renderTasks(el, animate = true) {
+      const filteredTasks = getFilteredTasks();
+      const fileNames = selectedFiles.map(getFileName).join('、');
+
+      if (filteredTasks.length === 0) {
+        el.innerHTML = `
+          <div class="page${animate ? '' : ' no-enter'}">
+            ${renderStepper(1)}
+            <div class="page-head">
+              <div>
+                <h1>选择任务</h1>
+                <p class="page-subtitle">没有匹配到可执行的操作。</p>
+              </div>
+            </div>
+            <div class="card">
+              ${emptyState('alertCircle', '当前文件类型暂不支持', '请返回上一步更换文件，或先转换为受支持的格式。',
+                `<button class="btn-secondary" onclick="showPage('upload')">${icon('arrowLeft')}返回选择文件</button>`)}
+            </div>
+          </div>`;
+        return;
+      }
+
+      const selected = getTask(selectedTask);
+
+      el.innerHTML = `
+        <div class="page${animate ? '' : ' no-enter'}">
+          ${renderStepper(1)}
+          <div class="page-head">
+            <button class="btn-secondary" onclick="showPage('upload')">${icon('arrowLeft')}返回</button>
+            <div>
+              <h1>选择任务</h1>
+              <p class="page-subtitle">已按文件类型筛选出 ${filteredTasks.length} 种可用操作。</p>
+            </div>
+          </div>
+          <div class="file-info" title="${escapeHtml(fileNames)}">
+            ${icon('layers')}
+            <span>已选择 ${selectedFiles.length} 个文件：${escapeHtml(fileNames)}</span>
+          </div>
+          <div class="task-grid">
+            ${filteredTasks.map((t, i) => `
+              <button type="button" class="task-card ${selectedTask === t.id ? 'selected' : ''}" style="--i:${i}" aria-pressed="${selectedTask === t.id ? 'true' : 'false'}" onclick="selectTask('${t.id}')">
+                <span class="task-card__ico" style="color:${t.color};background:${t.color}1F">${taskIcon(t.id)}</span>
+                <span class="task-card__name">${escapeHtml(t.name)}</span>
+                <span class="task-card__desc">${escapeHtml(t.desc)}</span>
+                ${t.batch ? `<span class="task-tag">${icon('layers')}批量</span>` : ''}
+              </button>
+            `).join('')}
+          </div>
+          ${selected?.batch ? `<div class="notice">${icon('info')}<span>${selected.workbench ? '将逐份分析当前文档，并在一个工作台中统一预览。' : '该任务会把当前选择的文件合并处理。'}</span></div>` : ''}
+          <div class="actions table-sticky-actions">
+            <button class="btn-secondary" onclick="showPage('upload')">上一步</button>
+            <button class="btn" onclick="doProcess()" ${!selectedTask ? 'disabled' : ''}>
+              ${selected?.workbench ? '进入整理工作台' : '开始处理'}${icon('arrowRight')}
+            </button>
+          </div>
+        </div>`;
+    }
+
+    function selectTask(taskId) {
+      selectedTask = taskId;
+      /* 只是换个选中项，就地刷新，不重播入场动画 */
+      renderTasks(document.getElementById('content'), false);
+    }
+
+    function doProcess() {
+      if (selectedTask === 'document-to-table') {
+        tableState = createEmptyTableState();
+        showPage('table-workbench');
+        loadTablePresets();
+        return;
+      }
+      isProcessing = true;
+      renderProcessing(document.getElementById('content'));
+      runProgress();
+    }
+
+    function cancelTask() {
+      ipcRenderer.invoke('cancel-task');
+      isProcessing = false;
+      showPage('upload');
+    }
+
+    function getTableInputFiles() {
+      const supported = new Set(['doc', 'docx', 'pdf', 'txt', 'md']);
+      return selectedFiles.filter(filePath => supported.has(getFileExt(filePath)));
+    }
+
+    function setTableMode(mode) {
+      const previousMode = tableState.mode;
+      const nextMode = ['auto', 'existing', 'custom', 'smart'].includes(mode) ? mode : 'auto';
+      if (nextMode === 'smart' && previousMode !== 'smart') {
+        tableState.useAiBeforeSmart = tableState.useAi;
+        tableState.useAi = true;
+      } else if (previousMode === 'smart' && nextMode !== 'smart') {
+        tableState.useAi = tableState.useAiBeforeSmart;
+      }
+      tableState.mode = nextMode;
+      renderTableWorkbench(document.getElementById('content'));
+      document.querySelector(`input[name="tableMode"][value="${tableState.mode}"]`)?.focus();
+      if (tableState.mode === 'smart' && !tableState.presetsLoaded && !tableState.presetsLoading) {
+        loadTablePresets();
+      }
+    }
+
+    function updateTableFields(value) {
+      tableState.customFields = String(value || '').slice(0, 500);
+      const button = document.getElementById('tableAnalyzeBtn');
+      if (button) button.disabled = (tableState.mode === 'custom' && parseTableFields().length === 0)
+        || (tableState.mode === 'smart' && !tableState.tableGoal.trim());
+    }
+
+    function updateTableGoal(value) {
+      tableState.tableGoal = String(value || '').slice(0, 500);
+      const button = document.getElementById('tableAnalyzeBtn');
+      if (button) button.disabled = !tableState.tableGoal.trim();
+    }
+
+    function applySmartGoalSuggestion(index) {
+      const suggestion = studentTableGoals[Number(index)];
+      if (!suggestion || tableState.busyOperation || tableState.stage !== 'configure') return;
+      tableState.tableGoal = suggestion.goal.slice(0, 500);
+      renderTableWorkbench(document.getElementById('content'));
+      const goalInput = document.getElementById('tableGoal');
+      goalInput?.focus();
+      goalInput?.setSelectionRange?.(goalInput.value.length, goalInput.value.length);
+    }
+
+    function parseTableFields() {
+      const selectedSchema = tableState.mode === 'smart' ? normalizeTablePresetSchema(tableState.selectedPresetSchema) : null;
+      if (selectedSchema) return selectedSchema.fields.map(field => field.label).slice(0, 30);
+      return [...new Set(tableState.customFields
+        .split(/[，,、;；\n]/)
+        .map(field => field.trim())
+        .filter(Boolean))]
+        .slice(0, 30);
+    }
+
+    function normalizeTablePresetSchema(schema) {
+      if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return null;
+      const seen = new Set();
+      const fields = (Array.isArray(schema.fields) ? schema.fields : []).slice(0, 30).map((field, index) => {
+        const source = field && typeof field === 'object' && !Array.isArray(field) ? field : {};
+        const label = cleanTableMessage(typeof field === 'string' ? field : (source.label || source.name || source.key), `字段 ${index + 1}`).slice(0, 100).trim();
+        const normalizedLabel = label.toLocaleLowerCase();
+        if (!label || seen.has(normalizedLabel)) return null;
+        seen.add(normalizedLabel);
+        const key = cleanTableMessage(source.key || source.id || label, label).slice(0, 100);
+        return {
+          key,
+          label,
+          aliases: (Array.isArray(source.aliases) ? source.aliases : []).slice(0, 10).map(alias => cleanTableMessage(alias).slice(0, 100)).filter(Boolean),
+          description: cleanTableMessage(source.description || '', '').slice(0, 300),
+          required: source.required === true,
+          type: cleanTableMessage(source.type || 'string', 'string').slice(0, 50),
+        };
+      }).filter(Boolean);
+      if (!fields.length) return null;
+      return {
+        tableTitle: cleanTableMessage(schema.tableTitle || schema.title || '智能整理表', '智能整理表').slice(0, 200),
+        rowDefinition: cleanTableMessage(schema.rowDefinition || schema.description || '每行代表一条独立记录', '每行代表一条独立记录').slice(0, 500),
+        fields,
+      };
+    }
+
+    function normalizeTablePreset(preset, index = 0) {
+      if (!preset || typeof preset !== 'object' || Array.isArray(preset)) return null;
+      const id = cleanTableMessage(preset.id || preset.presetId || '', '').slice(0, 100);
+      const schema = normalizeTablePresetSchema(preset.schema || preset.suggestedSchema);
+      if (!id || !schema) return null;
+      return {
+        id,
+        name: cleanTableMessage(preset.name || schema.tableTitle || `预设 ${index + 1}`, `预设 ${index + 1}`).slice(0, 200),
+        schema,
+      };
+    }
+
+    function presetSchemaForIpc(schema = tableState.selectedPresetSchema) {
+      const normalized = normalizeTablePresetSchema(schema);
+      if (!normalized) return null;
+      return {
+        tableTitle: normalized.tableTitle,
+        rowDefinition: normalized.rowDefinition,
+        fields: normalized.fields.map(field => ({
+          key: field.key,
+          label: field.label,
+          aliases: field.aliases.slice(),
+          required: field.required,
+          type: field.type,
+        })),
+      };
+    }
+
+    async function loadTablePresets(force = false) {
+      if (tableState.presetsLoading || (tableState.presetsLoaded && !force)) return;
+      const owner = tableState;
+      const requestToken = ++tablePresetRequestSequence;
+      owner.presetsLoading = true;
+      owner.presetNotice = null;
+      if (currentPage === 'table-workbench' && owner.stage === 'configure') renderTableWorkbench(document.getElementById('content'));
+      try {
+        const response = await ipcRenderer.invoke('list-table-presets', {});
+        if (tableState !== owner || requestToken !== tablePresetRequestSequence) return;
+        if (response?.ok === false) throw new Error(response.error || '读取本地预设失败');
+        const rawPresets = response?.presets || response?.result?.presets || (Array.isArray(response?.result) ? response.result : []);
+        owner.presets = (Array.isArray(rawPresets) ? rawPresets : []).slice(0, 200)
+          .map((preset, index) => normalizeTablePreset(preset, index))
+          .filter(Boolean);
+        owner.presetsLoaded = true;
+        if (owner.selectedPresetId && !owner.presets.some(preset => preset.id === owner.selectedPresetId)) {
+          owner.selectedPresetId = '';
+          owner.selectedPresetSchema = null;
+        }
+      } catch (error) {
+        if (tableState !== owner || requestToken !== tablePresetRequestSequence) return;
+        owner.presetNotice = { type: 'warning', text: cleanTableMessage(error, '读取本地预设失败，可继续使用临时字段。') };
+      } finally {
+        if (tableState === owner && requestToken === tablePresetRequestSequence) {
+          owner.presetsLoading = false;
+          if (currentPage === 'table-workbench' && owner.stage === 'configure') renderTableWorkbench(document.getElementById('content'));
+        }
+      }
+    }
+
+    async function selectTablePreset(value) {
+      if (tableState.busyOperation || tableState.stage !== 'configure') return;
+      const presetId = String(value || '').slice(0, 100);
+      const owner = tableState;
+      const requestToken = ++tablePresetRequestSequence;
+      owner.presetNotice = null;
+      if (!presetId) {
+        owner.selectedPresetId = '';
+        owner.selectedPresetSchema = null;
+        owner.customFields = '';
+        renderTableWorkbench(document.getElementById('content'));
+        document.getElementById('tablePresetSelect')?.focus();
+        return;
+      }
+      const preset = owner.presets.find(item => item.id === presetId);
+      if (!preset) {
+        owner.presetNotice = { type: 'warning', text: '所选预设已不存在，请刷新后重试。' };
+        renderTableWorkbench(document.getElementById('content'));
+        return;
+      }
+      owner.selectedPresetId = preset.id;
+      owner.selectedPresetSchema = preset.schema;
+      owner.customFields = preset.schema.fields.map(field => field.label).join('，');
+      renderTableWorkbench(document.getElementById('content'));
+      try {
+        const response = await ipcRenderer.invoke('use-table-preset', { presetId: preset.id });
+        if (tableState !== owner || requestToken !== tablePresetRequestSequence || owner.selectedPresetId !== preset.id) return;
+        if (response?.ok === false) throw new Error(response.error || '启用本地预设失败');
+        const returnedPreset = normalizeTablePreset(response?.preset || response?.result?.preset || null);
+        if (returnedPreset) {
+          owner.presets = owner.presets.map(item => item.id === returnedPreset.id ? returnedPreset : item);
+          owner.selectedPresetSchema = returnedPreset.schema;
+          owner.customFields = returnedPreset.schema.fields.map(field => field.label).join('，');
+        }
+        owner.presetNotice = { type: 'success', text: '已选择本地预设；仅使用字段结构，不包含任何历史文档内容。' };
+      } catch (error) {
+        if (tableState !== owner || requestToken !== tablePresetRequestSequence) return;
+        owner.selectedPresetId = '';
+        owner.selectedPresetSchema = null;
+        owner.presetNotice = { type: 'warning', text: `${cleanTableMessage(error, '启用本地预设失败')}，已保留为临时预设字段。` };
+      } finally {
+        if (tableState === owner && currentPage === 'table-workbench' && owner.stage === 'configure') {
+          renderTableWorkbench(document.getElementById('content'));
+          document.getElementById('tablePresetSelect')?.focus();
+        }
+      }
+    }
+
+    async function deleteSelectedTablePreset() {
+      if (tableState.busyOperation || tableState.stage !== 'configure' || !tableState.selectedPresetId) return;
+      const preset = tableState.presets.find(item => item.id === tableState.selectedPresetId);
+      if (!preset || !confirm(`确定删除本地预设“${preset.name}”吗？文档和已生成表格不会受影响。`)) return;
+      const owner = tableState;
+      const presetId = owner.selectedPresetId;
+      const requestToken = ++tablePresetRequestSequence;
+      try {
+        const response = await ipcRenderer.invoke('delete-table-preset', { presetId });
+        if (tableState !== owner || requestToken !== tablePresetRequestSequence) return;
+        if (response?.ok === false) throw new Error(response.error || '删除本地预设失败');
+        owner.presets = owner.presets.filter(item => item.id !== presetId);
+        owner.selectedPresetId = '';
+        owner.selectedPresetSchema = null;
+        owner.customFields = '';
+        owner.presetNotice = { type: 'success', text: '本地预设已删除。' };
+      } catch (error) {
+        if (tableState !== owner || requestToken !== tablePresetRequestSequence) return;
+        owner.presetNotice = { type: 'warning', text: cleanTableMessage(error, '删除本地预设失败') };
+      } finally {
+        if (tableState === owner && currentPage === 'table-workbench' && owner.stage === 'configure') renderTableWorkbench(document.getElementById('content'));
+      }
+    }
+
+    function renderTableWorkbench(el) {
+      const files = getTableInputFiles();
+      const ignoredCount = selectedFiles.length - files.length;
+
+      if (tableState.stage === 'analyzing') {
+        el.innerHTML = `
+          <div class="page">
+            <div class="page-head">
+              <button class="btn-secondary" onclick="cancelTableJob()">${icon('arrowLeft')}取消并返回</button>
+              <div>
+                <h1>整理为表格</h1>
+                <p class="page-subtitle">正在本地解析文档内容。</p>
+              </div>
+            </div>
+            <section class="card state-card">
+              <span class="spinner" role="status" aria-label="正在分析">
+                <svg viewBox="0 0 50 50" aria-hidden="true">
+                  <circle class="spinner__track" cx="25" cy="25" r="20" />
+                  <circle class="spinner__arc" cx="25" cy="25" r="20" />
+                </svg>
+              </span>
+              <h2 class="state-card__title">正在本地分析文档</h2>
+              <p id="tableProgressStatus" class="state-card__desc" role="status" aria-live="polite">${escapeHtml(tableState.progressText)}</p>
+              <div class="progress-bar" role="progressbar" aria-label="文档分析进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(tableState.progress)}"><div class="progress-fill" id="tableProgressFill" style="--p:${Math.max(3, Math.min(100, tableState.progress)) / 100}"></div></div>
+              <div class="progress-meta">
+                <span class="progress-percent" id="tableProgressPercent">${Math.round(tableState.progress)}%</span>
+                <span>优先使用本地解析，不会自动上传原文</span>
+              </div>
+              <button class="btn-cancel" onclick="cancelTableJob()">取消分析</button>
+            </section>
+          </div>`;
+        return;
+      }
+
+      if (tableState.stage === 'preview') {
+        renderTablePreview(el);
+        return;
+      }
+
+      const fields = parseTableFields();
+      const selectedPreset = tableState.presets.find(preset => preset.id === tableState.selectedPresetId) || null;
+      el.innerHTML = `
+        <div class="page">
+          <div class="page-head">
+            <button class="btn-secondary" onclick="leaveTableWorkbench()">${icon('arrowLeft')}返回</button>
+            <div>
+              <h1>整理为表格</h1>
+              <p class="page-subtitle">从 Word、PDF 和文本中提取结构化内容，先本地处理，再按需使用 AI。</p>
+            </div>
+          </div>
+          <div class="table-source-strip">
+            <div class="stat"><strong>${files.length}</strong><span>份可处理文档</span></div>
+            <div class="stat"><strong>本地优先</strong><span>原表、段落、键值与 OCR</span></div>
+            <div class="stat"><strong>XLSX / CSV</strong><span>分析后可编辑导出</span></div>
+          </div>
+          ${ignoredCount ? `<div class="notice warning">${icon('alertCircle')}<span>有 ${ignoredCount} 个不支持的文件会被忽略，仅处理 DOC、DOCX、PDF、TXT、MD。</span></div>` : ''}
+          ${files.some(filePath => getFileExt(filePath) === 'doc') ? `<div class="notice warning">${icon('alertCircle')}<span>旧版 DOC 将通过本机 Microsoft Word 只读转换为临时 DOCX；未安装 Word 时会给出明确错误，源文件不会被修改。</span></div>` : ''}
+          ${renderTableMessages()}
+          <section class="card">
+            <div class="section-head">
+              <div>
+                <h2>选择整理方式</h2>
+                <p class="setting-desc">自动模式适合大多数文档；结果生成后仍可直接修改单元格。</p>
+              </div>
+              <span class="local-badge">${icon('bolt')}0 Token 起步</span>
+            </div>
+            <div class="table-mode-grid">
+              ${renderTableModeCard('auto', '自动整理', '识别原表、重复记录、清单和键值结构', '推荐')}
+              ${renderTableModeCard('existing', '恢复原表', '只提取文档中已经存在的表格，不推断新字段', '')}
+              ${renderTableModeCard('custom', '自定义字段', '按你指定的列名从内容中组织数据', '')}
+              ${renderTableModeCard('smart', 'AI 智能规划', '优先匹配本地预设，不匹配时再根据目标动态识别字段', '预设优先')}
+            </div>
+            <div class="field-config ${tableState.mode === 'custom' ? 'visible' : ''}">
+              <label for="tableFields">目标字段</label>
+              <textarea id="tableFields" maxlength="500" oninput="updateTableFields(this.value)" placeholder="例如：项目名称，负责人，联系电话，金额，截止日期">${escapeHtml(tableState.customFields)}</textarea>
+              <div class="field-help"><span>使用逗号、分号或换行分隔，最多 30 列</span><span>${fields.length}/30</span></div>
+            </div>
+            <div class="field-config ${tableState.mode === 'smart' ? 'visible' : ''}">
+              <label for="tableGoal">本次整理目标</label>
+              <div class="student-goal-presets" role="group" aria-label="学生会常用整理目标">
+                <span>学生会常用目标</span>
+                <div>${studentTableGoals.map((suggestion, index) => `<button type="button" onclick="applySmartGoalSuggestion(${index})">${escapeHtml(suggestion.label)}</button>`).join('')}</div>
+                <small>快捷项只填写整理目标，不会固定输出列；字段仍由当前文档、本地预设和实际结构决定。</small>
+              </div>
+              <textarea id="tableGoal" maxlength="500" oninput="updateTableGoal(this.value)" placeholder="例如：形成可执行的工作安排（仅为示例，请按实际目标填写）">${escapeHtml(tableState.tableGoal)}</textarea>
+              <div class="field-help"><span>预设未完全匹配时，AI 才会根据目标和受预算限制的代表片段动态提出字段</span><span>${tableState.tableGoal.length}/500</span></div>
+              <div class="student-data-note">${icon('shield')}<span>已有清晰表头或命中预设时仍由本地 0 Token 处理；学号、电话等信息仅在确有必要时发送受预算限制的代表片段。</span></div>
+              <div class="table-preset-picker">
+                <div class="preset-picker-head">
+                  <label for="tablePresetSelect">本地表格预设</label>
+                  <button type="button" class="text-button" onclick="loadTablePresets(true)" ${tableState.presetsLoading ? 'disabled' : ''}>${tableState.presetsLoading ? '加载中…' : '刷新'}</button>
+                </div>
+                <div class="preset-picker-controls">
+                  <select id="tablePresetSelect" onchange="selectTablePreset(this.value)" ${tableState.presetsLoading ? 'disabled' : ''}>
+                    <option value="" ${!tableState.selectedPresetId ? 'selected' : ''}>自动识别（可填写临时预设字段）</option>
+                    ${tableState.presets.map(preset => `<option value="${escapeHtml(preset.id)}" ${preset.id === tableState.selectedPresetId ? 'selected' : ''}>${escapeHtml(preset.name)} · ${preset.schema.fields.length} 列</option>`).join('')}
+                  </select>
+                  ${selectedPreset ? `<button type="button" class="btn-secondary compact preset-delete" onclick="deleteSelectedTablePreset()" ${tableState.presetsLoading ? 'disabled' : ''}>${icon('trash')}删除预设</button>` : ''}
+                </div>
+                <div class="field-help"><span>预设只保存表名、每行定义和字段结构，不保存文档内容</span><span>${tableState.presets.length} 个</span></div>
+                ${tableState.presetNotice ? `<div class="inline-preset-notice ${tableState.presetNotice.type === 'warning' ? 'warning' : 'success'}" role="status" aria-live="polite">${escapeHtml(tableState.presetNotice.text)}</div>` : ''}
+              </div>
+              <label for="smartPresetFields" class="field-sub-label">预设字段（可选）</label>
+              <textarea id="smartPresetFields" maxlength="500" oninput="updateTableFields(this.value)" placeholder="例如：事项，负责人，截止日期，状态" ${selectedPreset ? 'disabled' : ''}>${escapeHtml(tableState.customFields)}</textarea>
+              <div class="field-help"><span>${selectedPreset ? '字段来自所选本地预设；切换到“自动识别”后可编辑临时字段' : '逗号分隔，最多 30 列；完全匹配时 0 Token 本地处理，缺列或结构不清时才调用 AI'}</span><span>${fields.length}/30</span></div>
+            </div>
+          </section>
+          <section class="card compact-card">
+            <div class="setting-row">
+              <div>
+                <h2>${tableState.mode === 'smart' ? '预设优先，AI 按需规划' : '分析阶段允许 AI 辅助'}</h2>
+                <p class="setting-desc">${tableState.mode === 'smart' ? '先在本地验证预设字段；完全匹配不调用 AI，只有缺列或结构不清时才发送受预算限制的代表片段。' : '默认关闭。开启后也只发送本地无法确定的短片段，并受设置页 Token 上限控制。'}</p>
+              </div>
+              <label class="toggle" title="分析阶段允许 AI 辅助">
+                <input type="checkbox" ${tableState.useAi ? 'checked' : ''} ${tableState.mode === 'smart' ? 'disabled' : ''} onchange="tableState.useAi=this.checked">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+          </section>
+          <div class="actions table-sticky-actions">
+            <button class="btn-secondary" onclick="leaveTableWorkbench()">取消</button>
+            <button class="btn" id="tableAnalyzeBtn" onclick="startTableAnalyze()"
+              ${files.length === 0 || (tableState.mode === 'custom' && fields.length === 0) || (tableState.mode === 'smart' && !tableState.tableGoal.trim()) ? 'disabled' : ''}>${icon('wand')}开始分析</button>
+          </div>
+        </div>`;
+    }
+
+    function renderTableModeCard(mode, title, description, tag) {
+      const selected = tableState.mode === mode;
+      return `
+        <label class="table-mode-card ${selected ? 'selected' : ''}">
+          <input type="radio" name="tableMode" value="${mode}" ${selected ? 'checked' : ''} onchange="setTableMode('${mode}')">
+          <span class="mode-check"></span>
+          <span class="mode-copy"><strong>${title}${tag ? `<em>${tag}</em>` : ''}</strong><small>${description}</small></span>
+        </label>`;
+    }
+
+    function renderTableMessages() {
+      const warnings = (tableState.warnings || []).slice(0, 8);
+      const errors = (tableState.errors || []).slice(0, 8);
+      const notice = tableState.notice;
+      return `
+        ${notice ? `<div class="notice ${notice.type === 'error' ? 'error' : notice.type === 'warning' ? 'warning' : 'success'}">${icon(notice.type === 'error' ? 'alertCircle' : notice.type === 'warning' ? 'alert' : 'checkCircle')}<span>${escapeHtml(notice.text)}</span></div>` : ''}
+        ${warnings.length ? `<div class="notice warning">${icon('alert')}<div class="notice__body"><strong>需要留意</strong>${warnings.map(message => `<span>${escapeHtml(message)}</span>`).join('')}</div></div>` : ''}
+        ${errors.length ? `<div class="notice error">${icon('alertCircle')}<div class="notice__body"><strong>处理异常</strong>${errors.map(message => `<span>${escapeHtml(message)}</span>`).join('')}</div></div>` : ''}`;
+    }
+
+    function cleanTableMessage(value, fallback = '') {
+      if (typeof value === 'string') return value.slice(0, 1000);
+      if (value && typeof value === 'object') return String(value.message || value.error || value.file || fallback).slice(0, 1000);
+      return String(value || fallback).slice(0, 1000);
+    }
+
+    async function maybeAutoSaveTablePreset(operationToken) {
+      if (tableState.mode !== 'smart'
+        || tableState.aiSkipped
+        || !tableState.schemaProvider
+        || tableState.errors.length
+        || tableState.totalRows < 1) return;
+      const schema = presetSchemaForIpc(tableState.suggestedSchema);
+      if (!schema || schema.fields.length < 1 || !isTableOperationCurrent(operationToken, 'analyze', 'preview')) return;
+      const name = (schema.tableTitle || tableState.tableTitle || '智能整理预设').slice(0, 200);
+      try {
+        const response = await ipcRenderer.invoke('save-table-preset', { name, schema });
+        if (!isTableOperationCurrent(operationToken, 'analyze', 'preview')) return;
+        if (response?.ok === false) throw new Error(response.error || '自动保存表格预设失败');
+        const savedPreset = normalizeTablePreset(response?.preset || response?.result?.preset || (response?.id ? response : null));
+        if (savedPreset) {
+          const existingIndex = tableState.presets.findIndex(preset => preset.id === savedPreset.id);
+          if (existingIndex >= 0) tableState.presets.splice(existingIndex, 1, savedPreset);
+          else tableState.presets.unshift(savedPreset);
+          tableState.presetsLoaded = true;
+          tableState.selectedPresetId = savedPreset.id;
+          tableState.selectedPresetSchema = savedPreset.schema;
+          tableState.customFields = savedPreset.schema.fields.map(field => field.label).join('，');
+        } else {
+          tableState.presetsLoaded = false;
+        }
+        const suffix = response?.deduplicated || response?.result?.deduplicated ? '（已与同结构预设合并）' : '';
+        tableState.presetSaveNotice = {
+          type: 'success',
+          text: `已自动保存为预设：${savedPreset?.name || name}${suffix}。仅保存表格结构，不包含文档内容。`,
+        };
+      } catch (error) {
+        if (!isTableOperationCurrent(operationToken, 'analyze', 'preview')) return;
+        tableState.presetSaveNotice = null;
+        tableState.warnings.push(`表格已生成，但${cleanTableMessage(error, '自动保存预设失败')}；不会保留不完整预设。`);
+      }
+    }
+
+    async function startTableAnalyze() {
+      const filePaths = getTableInputFiles();
+      const fields = parseTableFields();
+      const goal = tableState.tableGoal.trim();
+      const presetId = tableState.mode === 'smart' ? tableState.selectedPresetId : '';
+      const presetSchema = presetId ? presetSchemaForIpc() : null;
+      if (!filePaths.length || (tableState.mode === 'custom' && !fields.length) || (tableState.mode === 'smart' && !goal)) return;
+      const operationToken = beginTableOperation('analyze');
+      if (!operationToken) return;
+
+      tableState.stage = 'analyzing';
+      tableState.progress = 3;
+      tableState.progressText = '正在初始化本地解析器...';
+      tableState.warnings = [];
+      tableState.errors = [];
+      tableState.notice = null;
+      tableState.presetSaveNotice = null;
+      isProcessing = true;
+      renderTableWorkbench(document.getElementById('content'));
+
+      const progressListener = (event, data) => onTableProgress(event, data, operationToken);
+      ipcRenderer.on('table-progress', progressListener);
+
+      try {
+        const response = await ipcRenderer.invoke('table-analyze', {
+          files: filePaths,
+          filePaths,
+          mode: tableState.mode,
+          fields,
+          goal,
+          useAi: tableState.useAi,
+          presetId,
+          presetSchema,
+          options: { mode: tableState.mode, fields, goal, useAi: tableState.useAi, presetId, presetSchema },
+        });
+        if (!isTableOperationCurrent(operationToken, 'analyze', 'analyzing')) return;
+        if (!response?.ok) throw new Error(response?.error || '文档分析失败');
+        applyTableResponse(response);
+        tableState.stage = 'preview';
+        tableState.progress = 100;
+        tableState.notice = { type: 'success', text: `分析完成：已生成 ${tableState.totalRows} 行数据。` };
+        await maybeAutoSaveTablePreset(operationToken);
+      } catch (error) {
+        if (!isTableOperationCurrent(operationToken, 'analyze')) return;
+        tableState.stage = 'configure';
+        tableState.errors = [cleanTableMessage(error, '文档分析失败')];
+      } finally {
+        ipcRenderer.removeListener('table-progress', progressListener);
+        if (finishTableOperation(operationToken, 'analyze') && currentPage === 'table-workbench') {
+          renderTableWorkbench(document.getElementById('content'));
+        }
+      }
+    }
+
+    function onTableProgress(event, data, operationToken) {
+      if (!isTableOperationCurrent(operationToken, 'analyze', 'analyzing')) return;
+      const percent = Number(data?.percent ?? data?.progress ?? tableState.progress);
+      if (Number.isFinite(percent)) tableState.progress = Math.min(99, Math.max(3, percent));
+      tableState.progressText = cleanTableMessage(data?.step || data?.message || data?.file, tableState.progressText);
+      const fill = document.getElementById('tableProgressFill');
+      const label = document.getElementById('tableProgressPercent');
+      const status = document.getElementById('tableProgressStatus');
+      if (fill) {
+        setProgressFill(fill, tableState.progress);
+        fill.parentElement?.setAttribute('aria-valuenow', String(Math.round(tableState.progress)));
+      }
+      if (label) label.textContent = `${Math.round(tableState.progress)}%`;
+      if (status) status.textContent = tableState.progressText;
+    }
+
+    async function cancelTableJob() {
+      const jobId = tableState.jobId;
+      invalidateTableOperation(false);
+      tableState.stage = 'configure';
+      tableState.notice = { type: 'warning', text: '分析已取消。' };
+      if (currentPage === 'table-workbench') renderTableWorkbench(document.getElementById('content'));
+      try { await ipcRenderer.invoke('table-cancel', { jobId }); } catch (_) {}
+    }
+
+    async function leaveTableWorkbench() {
+      invalidateTableOperation(false);
+      if (tableState.jobId) {
+        try { await ipcRenderer.invoke('table-cancel', { jobId: tableState.jobId }); } catch (_) {}
+      }
+      tableState = createEmptyTableState();
+      showPage('tasks');
+    }
+
+    function applyTableResponse(response) {
+      const root = response || {};
+      const payload = response?.result || response?.data || root;
+      const table = payload.table || payload.preview || payload.tables?.[0] || (Array.isArray(root.rows) ? root : payload);
+      const rawRows = Array.isArray(table.rows) ? table.rows : Array.isArray(table.data) ? table.data : [];
+      const rawColumns = Array.isArray(table.columns)
+        ? table.columns
+        : Array.isArray(root.columns) && root.columns.length
+          ? root.columns
+          : deriveTableColumns(rawRows);
+      const columns = rawColumns.slice(0, 200).map((column, index) => {
+        if (typeof column === 'string') return { key: column || `column_${index + 1}`, label: column || `列 ${index + 1}` };
+        const key = String(column?.key || column?.id || column?.name || column?.label || `column_${index + 1}`);
+        return { key, label: String(column?.label || column?.name || key) };
+      });
+
+      tableState.jobId = response?.jobId || payload.jobId || tableState.jobId;
+      tableState.columns = columns;
+      const sourceMap = payload.sources && typeof payload.sources === 'object' ? payload.sources : {};
+      tableState.rows = rawRows.slice(0, 10000).map((row, rowIndex) => normalizeTableRow(row, columns, rowIndex, sourceMap));
+      tableState.totalRows = Number(root.totalRows ?? table.totalRows ?? payload.totalRows ?? payload.stats?.totalRows ?? rawRows.length) || rawRows.length;
+      tableState.tableCount = Array.isArray(payload.tables) ? payload.tables.length : 1;
+      tableState.tableTitle = cleanTableMessage(table.title || '整理结果');
+      tableState.tableId = String(table.id || payload.tableId || root.tableId || '');
+      const suggestedFields = root.suggestedFields ?? payload.suggestedFields ?? table.suggestedFields;
+      if (Array.isArray(suggestedFields)) {
+        tableState.suggestedFields = suggestedFields.slice(0, 50).map((field, index) => {
+          if (typeof field === 'string') return field.slice(0, 100);
+          return String(field?.label || field?.name || field?.key || `字段 ${index + 1}`).slice(0, 100);
+        }).filter(Boolean);
+      }
+      const suggestedSchema = root.suggestedSchema ?? payload.suggestedSchema ?? table.suggestedSchema;
+      if (suggestedSchema && typeof suggestedSchema === 'object' && !Array.isArray(suggestedSchema)) {
+        tableState.suggestedSchema = normalizeTablePresetSchema(suggestedSchema) || {
+          tableTitle: cleanTableMessage(suggestedSchema.tableTitle || suggestedSchema.title || '', ''),
+          rowDefinition: cleanTableMessage(suggestedSchema.rowDefinition || suggestedSchema.description || '', ''),
+          fields: [],
+        };
+      }
+      const aiSkipped = root.aiSkipped ?? payload.aiSkipped ?? table.aiSkipped;
+      if (aiSkipped !== undefined && aiSkipped !== null) {
+        tableState.aiSkipped = aiSkipped === true || aiSkipped === 1 || aiSkipped === 'true';
+        if (tableState.aiSkipped) tableState.presetMatchedInitially = true;
+        if (!tableState.aiSkipped) tableState.aiSkipReason = '';
+      }
+      const aiSkipReason = root.aiSkipReason ?? payload.aiSkipReason ?? table.aiSkipReason;
+      if (aiSkipReason !== undefined && aiSkipReason !== null) {
+        tableState.aiSkipReason = cleanTableMessage(aiSkipReason, '');
+      }
+      const schemaProvider = root.schemaProvider ?? payload.schemaProvider ?? table.schemaProvider;
+      if (schemaProvider !== undefined && schemaProvider !== null) {
+        tableState.schemaProvider = cleanTableMessage(schemaProvider, '').slice(0, 100);
+      }
+      tableState.dirty = false;
+      tableState.page = 1;
+      tableState.warnings = (root.warnings || payload.warnings || table.warnings || []).map(value => cleanTableMessage(value)).filter(Boolean);
+      tableState.errors = (root.errors || payload.errors || table.errors || []).map(value => cleanTableMessage(value)).filter(Boolean);
+      tableState.stats = payload.stats || table.stats || {};
+      if (rawRows.length > 10000) {
+        tableState.warnings.push('预览已限制为前 10,000 行，导出仍可由后台使用完整结果。');
+      }
+    }
+
+    function deriveTableColumns(rows) {
+      const first = rows.find(row => row && typeof row === 'object' && !Array.isArray(row));
+      const values = first?.values || first?.data || first || {};
+      const metadata = new Set(['source', '_source', '__source', 'location', 'page', 'paragraph', 'needsReview', 'confidence', 'status', 'values', 'data', 'cells']);
+      return Object.keys(values).filter(key => !metadata.has(key));
+    }
+
+    function normalizeTableRow(row, columns, rowIndex, sourceMap = {}) {
+      const sourceObject = row && typeof row === 'object' && !Array.isArray(row) ? row : {};
+      const values = Array.isArray(row)
+        ? row
+        : Array.isArray(sourceObject.values)
+          ? sourceObject.values
+          : sourceObject.values || sourceObject.data || sourceObject.cells || sourceObject;
+      const cells = columns.map((column, columnIndex) => {
+        const rawCell = Array.isArray(values) ? values[columnIndex] : values?.[column.key] ?? values?.[column.label];
+        if (rawCell && typeof rawCell === 'object' && !Array.isArray(rawCell)) {
+          return {
+            value: rawCell.value ?? rawCell.text ?? '',
+            needsReview: Boolean(rawCell.needsReview ?? rawCell.uncertain ?? rawCell.missing) || (Number.isFinite(Number(rawCell.confidence)) && Number(rawCell.confidence) < 0.75),
+            confidence: Number(rawCell.confidence),
+            source: cleanTableMessage(rawCell.source || formatTableSourceIds(rawCell.sourceIds, sourceMap).summary),
+            sourceIds: Array.isArray(rawCell.sourceIds) ? rawCell.sourceIds.slice(0, 20).map(String) : [],
+            edited: false,
+          };
+        }
+        return { value: rawCell ?? '', needsReview: false, confidence: NaN, source: '', sourceIds: [], edited: false };
+      });
+      const resolvedSource = formatTableSourceIds(sourceObject.sourceIds, sourceMap);
+      const source = cleanTableMessage(sourceObject.source || sourceObject._source || sourceObject.__source || resolvedSource.source);
+      const location = cleanTableMessage(sourceObject.location || (sourceObject.page ? `第 ${sourceObject.page} 页` : '') || (sourceObject.paragraph ? `段落 ${sourceObject.paragraph}` : '') || resolvedSource.location);
+      const confidence = Number(sourceObject.confidence);
+      return {
+        id: sourceObject.id ?? rowIndex,
+        cells,
+        source,
+        location,
+        sourceIds: Array.isArray(sourceObject.sourceIds) ? sourceObject.sourceIds.slice(0, 100).map(String) : [],
+        confidence,
+        needsReview: Boolean(sourceObject.needsReview ?? sourceObject.uncertain) || sourceObject.status === 'needs_review' || cells.some(cell => cell.needsReview),
+        aiEnhanced: Boolean(sourceObject.aiEnhanced) || sourceObject.status === 'ai-verified',
+      };
+    }
+
+    function formatTableSourceIds(sourceIds, sourceMap) {
+      const sources = (Array.isArray(sourceIds) ? sourceIds : [])
+        .map(sourceId => sourceMap?.[sourceId])
+        .filter(source => source && typeof source === 'object');
+      if (!sources.length) return { source: '', location: '', summary: '' };
+      const source = sources[0];
+      const sourceName = String(source.fileName || getFileName(source.file || '') || '源文档');
+      const locationParts = [];
+      if (source.page) locationParts.push(`第 ${source.page} 页`);
+      if (source.table) locationParts.push(`表格 ${source.table}`);
+      if (source.row) locationParts.push(`第 ${source.row} 行`);
+      if (source.paragraph) locationParts.push(`段落 ${source.paragraph}`);
+      if (source.line) locationParts.push(`第 ${source.line} 行`);
+      else if (source.lineStart) locationParts.push(source.lineEnd && source.lineEnd !== source.lineStart ? `第 ${source.lineStart}–${source.lineEnd} 行` : `第 ${source.lineStart} 行`);
+      const location = locationParts.join(' · ');
+      return { source: sourceName, location, summary: [sourceName, location].filter(Boolean).join(' · ') };
+    }
+
+    function renderTablePreview(el) {
+      const pageCount = Math.max(1, Math.ceil(tableState.rows.length / tableState.pageSize));
+      tableState.page = Math.min(pageCount, Math.max(1, tableState.page));
+      const start = (tableState.page - 1) * tableState.pageSize;
+      const rows = tableState.rows.slice(start, start + tableState.pageSize);
+      const visibleColumns = tableState.columns.slice(0, 30);
+      const reviewCount = tableState.rows.filter(row => row.needsReview).length;
+      const enhancedCount = tableState.rows.filter(row => row.aiEnhanced).length;
+      const busyOperation = tableState.busyOperation;
+      const busyLabel = busyOperation === 'enhance' ? 'AI 正在增强待确认项' : busyOperation === 'export' ? '正在生成导出文件' : '';
+      const schemaTitle = tableState.suggestedSchema?.tableTitle || '';
+      const rowDefinition = tableState.suggestedSchema?.rowDefinition || '';
+      const aiSkipDetail = tableState.aiSkipReason === 'preset-schema-match'
+        ? '本地识别的字段与预设字段完全一致，无需发送文档片段。'
+        : tableState.aiSkipReason;
+      const presetStayedLocal = tableState.presetMatchedInitially && !tableState.aiUsedAfterPresetMatch;
+
+      el.innerHTML = `
+        <div class="page">
+          <div class="page-head table-preview-head">
+            <button class="btn-secondary" onclick="resetTableAnalysis()" ${busyOperation ? 'disabled' : ''}>${icon('arrowLeft')}调整设置</button>
+            <div>
+              <h1>表格预览</h1>
+              <p class="page-subtitle">正在预览“${escapeHtml(tableState.tableTitle || '整理结果')}”；单元格可直接编辑，黄色内容建议导出前确认。</p>
+            </div>
+            <div class="table-head-actions">
+              <button class="btn-secondary" onclick="enhanceTableWithAi()" ${busyOperation ? 'disabled' : ''}>
+                ${icon('sparkles')}${tableState.enhancing ? 'AI 正在整理…' : 'AI 增强待确认项'}
+              </button>
+              <button class="btn" onclick="exportTable('xlsx')" ${busyOperation ? 'disabled' : ''}>${icon('download')}导出 XLSX</button>
+              <button class="btn-secondary" onclick="exportTable('csv')" ${busyOperation ? 'disabled' : ''}>导出 CSV</button>
+            </div>
+          </div>
+          <div class="table-summary">
+            <div class="stat"><strong>${tableState.totalRows}</strong><span>总行数</span></div>
+            <div class="stat ${reviewCount ? 'stat--warning' : ''}"><strong>${reviewCount}</strong><span>待确认</span></div>
+            <div class="stat"><strong>${enhancedCount}</strong><span>AI 已增强</span></div>
+            <div class="stat"><strong>${tableState.columns.length}</strong><span>数据列</span></div>
+          </div>
+          ${renderTableMessages()}
+          ${tableState.presetSaveNotice ? `<div class="notice success preset-save-notice" role="status" aria-live="polite">${icon('checkCircle')}<span>${escapeHtml(tableState.presetSaveNotice.text)}</span></div>` : ''}
+          ${tableState.presetMatchedInitially ? `
+            <div class="notice ${presetStayedLocal ? 'success' : ''} preset-match-notice" role="status" aria-live="polite">
+              ${icon(presetStayedLocal ? 'checkCircle' : 'info')}
+              <div class="notice__body">
+                <strong>${presetStayedLocal ? '已匹配预设格式，本次未调用 AI（0 Token）' : '预设格式已在本地匹配；待确认内容随后使用了 AI'}</strong>
+                ${presetStayedLocal && aiSkipDetail ? `<span>${escapeHtml(aiSkipDetail)}</span>` : !presetStayedLocal ? '<span>字段结构仍来自本地预设，AI 只处理了需要确认的内容。</span>' : ''}
+                ${schemaTitle || rowDefinition ? `<small>${schemaTitle ? `表格：${escapeHtml(schemaTitle)}` : ''}${schemaTitle && rowDefinition ? ' · ' : ''}${rowDefinition ? `每行：${escapeHtml(rowDefinition)}` : ''}</small>` : ''}
+                ${tableState.suggestedFields.length ? `<div class="matched-fields" aria-label="本地匹配字段">${tableState.suggestedFields.map(field => `<span>${escapeHtml(field)}</span>`).join('')}</div>` : ''}
+              </div>
+            </div>`
+          : tableState.suggestedFields.length ? `
+            <div class="suggested-fields" role="status" aria-live="polite">
+              <strong>${icon('wand')}本次识别字段</strong>
+              ${schemaTitle || rowDefinition ? `<small>${schemaTitle ? `表格：${escapeHtml(schemaTitle)}` : ''}${schemaTitle && rowDefinition ? ' · ' : ''}${rowDefinition ? `每行：${escapeHtml(rowDefinition)}` : ''}</small>` : ''}
+              <div>${tableState.suggestedFields.map(field => `<span>${escapeHtml(field)}</span>`).join('')}</div>
+              <small>字段由本次文档与整理目标动态生成，可返回调整目标后重新分析。</small>
+            </div>` : ''}
+          ${busyOperation ? `<div class="notice table-busy-notice" role="status" aria-live="polite">${icon('clock')}<span>${escapeHtml(busyLabel)}，完成前已锁定编辑和其他操作。</span><button class="btn-cancel compact" onclick="cancelCurrentTableOperation()">取消当前操作</button></div>` : ''}
+          ${tableState.tableCount > 1 ? `<div class="notice warning">${icon('alert')}<span>本次识别出 ${tableState.tableCount} 张表。工作台预览并编辑第一张表，导出文件会同时保留其余表格。</span></div>` : ''}
+          ${tableState.columns.length > visibleColumns.length ? `<div class="notice warning">${icon('alert')}<span>为保证界面流畅，预览仅显示前 ${visibleColumns.length} 列，导出包含全部 ${tableState.columns.length} 列。</span></div>` : ''}
+          ${tableState.exportedPath ? `
+            <div class="notice success export-result">
+              ${icon('checkCircle')}<span>已导出：${escapeHtml(getFileName(tableState.exportedPath))}</span>
+              <span class="row-actions">
+                <button class="btn-secondary compact" onclick="openTableExport()">${icon('external')}打开</button>
+                <button class="btn-secondary compact" onclick="revealTableExport()">${icon('target')}定位</button>
+              </span>
+            </div>` : ''}
+          <div class="table-preview-card">
+            ${visibleColumns.length === 0
+              ? emptyState('inbox', '没有识别出可预览的数据列', '请返回调整整理方式，或检查源文档内容。')
+              : `<div class="data-table-wrap">
+                  <table class="data-table">
+                    <thead><tr>
+                      <th class="row-number" scope="col">#</th>
+                      ${visibleColumns.map(column => `<th scope="col" title="${escapeHtml(column.label)}">${escapeHtml(column.label)}</th>`).join('')}
+                      <th class="row-status" scope="col">状态</th>
+                      <th class="row-source" scope="col">来源</th>
+                    </tr></thead>
+                    <tbody>
+                      ${rows.length ? rows.map((row, pageIndex) => renderTableRow(row, start + pageIndex, visibleColumns.length)).join('') : `<tr><td class="empty-table" colspan="${visibleColumns.length + 3}">没有数据行</td></tr>`}
+                    </tbody>
+                  </table>
+                </div>`}
+            <div class="table-pagination">
+              <span>显示 ${tableState.rows.length ? start + 1 : 0}–${Math.min(start + tableState.pageSize, tableState.rows.length)} 行，共加载 ${tableState.rows.length} 行</span>
+              <div>
+                <button class="btn-secondary compact" onclick="changeTablePage(-1)" ${tableState.page <= 1 || busyOperation ? 'disabled' : ''}>${icon('chevronLeft')}上一页</button>
+                <span class="pagination-page">第 ${tableState.page} / ${pageCount} 页</span>
+                <button class="btn-secondary compact" onclick="changeTablePage(1)" ${tableState.page >= pageCount || busyOperation ? 'disabled' : ''}>下一页${icon('chevronRight')}</button>
+              </div>
+            </div>
+          </div>
+          <div class="table-privacy-note">
+            ${icon('shield')}
+            <span><strong>本地优先</strong>AI 智能规划仅发送受 Token 预算限制的代表片段；后续增强只发送待确认片段。API Key 不会进入页面缓存、历史记录或日志。</span>
+          </div>
+        </div>`;
+    }
+
+    function renderTableRow(row, rowIndex, visibleColumnCount) {
+      const source = [row.source, row.location].filter(Boolean).join(' · ') || '未提供';
+      const status = row.needsReview
+        ? `<span class="status-badge review">${icon('alert')}待确认</span>`
+        : row.aiEnhanced
+          ? `<span class="status-badge ai">${icon('sparkles')}AI 已增强</span>`
+          : `<span class="status-badge ready">${icon('check')}已校验</span>`;
+      return `
+        <tr class="${row.needsReview ? 'needs-review' : ''}">
+          <td class="row-number">${rowIndex + 1}</td>
+          ${row.cells.slice(0, visibleColumnCount).map((cell, columnIndex) => `
+            <td class="${cell.needsReview ? 'cell-review' : ''}">
+              <input type="text" value="${escapeHtml(cell.value)}" aria-label="第 ${rowIndex + 1} 行，${escapeHtml(tableState.columns[columnIndex]?.label || `列 ${columnIndex + 1}`)}" title="${escapeHtml(cell.source || String(cell.value ?? ''))}"
+                oninput="updateTableCell(${rowIndex},${columnIndex},this.value,this)" ${tableState.busyOperation ? 'disabled' : ''}>
+            </td>`).join('')}
+          <td class="row-status">${status}</td>
+          <td class="row-source" title="${escapeHtml(source)}">${escapeHtml(source)}</td>
+        </tr>`;
+    }
+
+    function updateTableCell(rowIndex, columnIndex, value, input) {
+      if (tableState.busyOperation) return;
+      const cell = tableState.rows?.[rowIndex]?.cells?.[columnIndex];
+      if (!cell) return;
+      cell.value = String(value ?? '').slice(0, 10000);
+      cell.needsReview = false;
+      cell.edited = true;
+      const row = tableState.rows[rowIndex];
+      row.needsReview = row.cells.some(item => item.needsReview);
+      tableState.dirty = true;
+      input?.closest('td')?.classList.remove('cell-review');
+      if (!row.needsReview) {
+        const tableRow = input?.closest('tr');
+        tableRow?.classList.remove('needs-review');
+        const statusCell = tableRow?.querySelector('.row-status');
+        if (statusCell) statusCell.innerHTML = `<span class="status-badge ready">${icon('check')}已编辑</span>`;
+      }
+    }
+
+    function changeTablePage(delta) {
+      if (tableState.busyOperation) return;
+      const pageCount = Math.max(1, Math.ceil(tableState.rows.length / tableState.pageSize));
+      tableState.page = Math.min(pageCount, Math.max(1, tableState.page + delta));
+      renderTablePreview(document.getElementById('content'));
+      document.getElementById('content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function resetTableAnalysis() {
+      if (tableState.busyOperation) return;
+      invalidateTableOperation(false);
+      if (tableState.jobId) {
+        try { await ipcRenderer.invoke('table-cancel', { jobId: tableState.jobId }); } catch (_) {}
+      }
+      const mode = tableState.mode;
+      const customFields = tableState.customFields;
+      const tableGoal = tableState.tableGoal;
+      const useAi = tableState.useAi;
+      const useAiBeforeSmart = tableState.useAiBeforeSmart;
+      const presets = tableState.presets.slice();
+      const presetsLoaded = tableState.presetsLoaded;
+      const selectedPresetId = tableState.selectedPresetId;
+      const selectedPresetSchema = tableState.selectedPresetSchema;
+      tableState = createEmptyTableState();
+      Object.assign(tableState, {
+        mode,
+        customFields,
+        tableGoal,
+        useAi,
+        useAiBeforeSmart,
+        presets,
+        presetsLoaded,
+        selectedPresetId,
+        selectedPresetSchema,
+      });
+      renderTableWorkbench(document.getElementById('content'));
+      if (mode === 'smart' && !presetsLoaded) loadTablePresets();
+    }
+
+    function serializeTableData() {
+      const patches = [];
+      for (let rowIndex = 0; rowIndex < tableState.rows.length; rowIndex += 1) {
+        const row = tableState.rows[rowIndex];
+        for (let columnIndex = 0; columnIndex < row.cells.length; columnIndex += 1) {
+          const cell = row.cells[columnIndex];
+          if (!cell.edited) continue;
+          patches.push({
+            rowId: row.id == null ? '' : String(row.id),
+            rowIndex,
+            columnKey: tableState.columns[columnIndex]?.key || `column_${columnIndex + 1}`,
+            value: String(cell.value ?? ''),
+          });
+        }
+      }
+      return {
+        tableId: tableState.tableId,
+        patches,
+      };
+    }
+
+    async function cancelCurrentTableOperation() {
+      const operation = tableState.busyOperation;
+      if (!operation || operation === 'analyze') return;
+      const jobId = tableState.jobId;
+      invalidateTableOperation(false);
+      tableState.notice = { type: 'warning', text: operation === 'enhance' ? 'AI 增强已取消。' : '导出已取消。' };
+      if (currentPage === 'table-workbench' && tableState.stage === 'preview') {
+        renderTablePreview(document.getElementById('content'));
+      }
+      try { await ipcRenderer.invoke('table-cancel', { jobId: jobId || '' }); } catch (_) {}
+    }
+
+    async function enhanceTableWithAi() {
+      if (tableState.busyOperation) return;
+      const presetMatchedBeforeEnhance = tableState.presetMatchedInitially;
+      const reviewIndexes = tableState.rows
+        .map((row, index) => row.needsReview ? index : -1)
+        .filter(index => index >= 0);
+      if (!reviewIndexes.length) {
+        tableState.notice = { type: 'success', text: '当前没有待确认内容，无需调用 AI。' };
+        renderTablePreview(document.getElementById('content'));
+        return;
+      }
+
+      const operationToken = beginTableOperation('enhance');
+      if (!operationToken) return;
+      tableState.enhancing = true;
+      tableState.notice = { type: 'success', text: `仅提交 ${reviewIndexes.length} 行待确认片段，正在进行 AI 增强...` };
+      renderTablePreview(document.getElementById('content'));
+      try {
+        const response = await ipcRenderer.invoke('table-ai-enhance', {
+          jobId: tableState.jobId,
+          fragments: 'needs-review',
+          rowIndexes: reviewIndexes,
+          provider: 'auto',
+          tableData: serializeTableData(),
+          options: { localFirst: true, fallback: true },
+        });
+        if (!isTableOperationCurrent(operationToken, 'enhance', 'preview')) return;
+        if (!response?.ok) throw new Error(response?.error || 'AI 增强失败');
+        applyTableResponse(response);
+        if (presetMatchedBeforeEnhance) tableState.aiUsedAfterPresetMatch = true;
+        tableState.notice = { type: 'success', text: 'AI 增强完成，请复核黄色标记和来源信息。' };
+      } catch (error) {
+        if (!isTableOperationCurrent(operationToken, 'enhance', 'preview')) return;
+        tableState.notice = { type: 'error', text: cleanTableMessage(error, 'AI 增强失败') };
+      } finally {
+        if (finishTableOperation(operationToken, 'enhance') && currentPage === 'table-workbench' && tableState.stage === 'preview') {
+          renderTablePreview(document.getElementById('content'));
+        }
+      }
+    }
+
+    async function exportTable(format) {
+      if (tableState.busyOperation || !['xlsx', 'csv'].includes(format)) return;
+      const operationToken = beginTableOperation('export');
+      if (!operationToken) return;
+      tableState.exporting = true;
+      tableState.notice = { type: 'success', text: `正在生成 ${format.toUpperCase()} 文件...` };
+      renderTablePreview(document.getElementById('content'));
+      try {
+        const response = await ipcRenderer.invoke('table-export', {
+          jobId: tableState.jobId,
+          format,
+          tableData: serializeTableData(),
+          options: { includeSource: true },
+        });
+        if (!isTableOperationCurrent(operationToken, 'export', 'preview')) return;
+        if (!response?.ok) throw new Error(response?.error || '导出失败');
+        const outputPath = response.outputPath || response.path || response.result?.outputPath || response.result?.path || response.results?.[0];
+        tableState.exportedPath = outputPath || '';
+        tableState.notice = { type: 'success', text: `${format.toUpperCase()} 已成功导出。` };
+        if (outputPath) {
+          saveHistory({ taskId: 'document-to-table', sourceFiles: selectedFiles, results: [outputPath], errors: [] });
+        }
+      } catch (error) {
+        if (!isTableOperationCurrent(operationToken, 'export', 'preview')) return;
+        tableState.notice = { type: 'error', text: cleanTableMessage(error, '导出失败') };
+      } finally {
+        if (finishTableOperation(operationToken, 'export') && currentPage === 'table-workbench' && tableState.stage === 'preview') {
+          renderTablePreview(document.getElementById('content'));
+        }
+      }
+    }
+
+    async function openTableExport() {
+      if (tableState.exportedPath) await ipcRenderer.invoke('open-path', tableState.exportedPath);
+    }
+
+    async function revealTableExport() {
+      if (tableState.exportedPath) await ipcRenderer.invoke('show-item-in-folder', tableState.exportedPath);
+    }
+
+    async function runProgress() {
+      const fill = document.getElementById('progressFill');
+      const text = document.getElementById('progressText');
+      const statusEl = document.getElementById('progressStatus');
+      const cancelBtn = document.getElementById('cancelBtn');
+
+      if (!fill || !text) return;
+
+      ipcRenderer.on('task-progress', (event, data) => {
+        if (!isProcessing) return;
+        const p = data.percent || 0;
+        setProgressFill(fill, p);
+        text.textContent = p + '%';
+        if (statusEl) {
+          statusEl.textContent = data.step || data.file;
+        }
+      });
+
+      setProgressFill(fill, 5);
+      text.textContent = '5%';
+      if (statusEl) statusEl.textContent = '正在启动转换...';
+
+      let result = null;
+      try {
+        result = await ipcRenderer.invoke('process-files', selectedFiles, selectedTask);
+      } catch (e) {
+        console.error('Process failed:', e);
+        result = { ok: false, results: [], errors: [{ file: '', error: e.message }] };
+      }
+
+      ipcRenderer.removeAllListeners('task-progress');
+      isProcessing = false;
+
+      setProgressFill(fill, 100);
+      text.textContent = '100%';
+      if (statusEl) statusEl.textContent = '处理完成';
+      if (cancelBtn) cancelBtn.style.display = 'none';
+
+      latestResult = {
+        ...result,
+        taskId: selectedTask,
+        sourceFiles: [...selectedFiles],
+        completedAt: Date.now(),
+      };
+      saveHistory(latestResult);
+
+      await new Promise(r => setTimeout(r, 500));
+      showPage('result', latestResult);
+    }
+
+    function renderProcessing(el) {
+      const taskName = getTask(selectedTask)?.name || '';
+      const fileNames = selectedFiles.map(getFileName).join('、');
+
+      el.innerHTML = `
+        <div class="page">
+          ${renderStepper(2)}
+          <section class="card state-card">
+            <span class="spinner" role="status" aria-label="正在处理">
+              <svg viewBox="0 0 50 50" aria-hidden="true">
+                <circle class="spinner__track" cx="25" cy="25" r="20" />
+                <circle class="spinner__arc" cx="25" cy="25" r="20" />
+              </svg>
+            </span>
+            <h1 class="state-card__title">正在处理中…</h1>
+            <p class="state-card__desc">${escapeHtml(fileNames)} → ${escapeHtml(taskName)}</p>
+            <div class="progress-bar" role="progressbar" aria-label="处理进度">
+              <div class="progress-fill" id="progressFill" style="--p:0"></div>
+            </div>
+            <div class="progress-meta">
+              <span class="progress-percent" id="progressText">0%</span>
+              <span id="progressStatus">准备中…</span>
+            </div>
+            <button class="btn-cancel" id="cancelBtn" onclick="cancelTask()">取消处理</button>
+          </section>
+        </div>`;
+    }
+
+    function renderResult(el, result) {
+      const safeResult = result || { results: [], errors: [] };
+      const results = (safeResult.results || []).filter(Boolean);
+      const errors = safeResult.errors || [];
+      const successCount = results.length;
+      const errorCount = errors.length;
+
+      let errorHtml = '';
+      if (errorCount > 0) {
+        errorHtml = `
+          <section class="card card--danger">
+            <div class="section-head">
+              <div>
+                <h2>${icon('alert')}部分文件处理失败（${errorCount}）</h2>
+                <p class="setting-desc">失败文件已跳过，其余文件不受影响，可修复后重新处理。</p>
+              </div>
+            </div>
+            <ul class="error-list">
+              ${errors.map(e => `<li class="error-line">${icon('alertCircle')}<span>${escapeHtml(e.file ? e.file + '：' : '')}${escapeHtml(e.error)}</span></li>`).join('')}
+            </ul>
+          </section>`;
+      }
+
+      const resultListHtml = results.length > 0
+        ? `<ul class="result-list">
+            ${results.map((p, i) => {
+              const ext = getFileExt(p);
+              const color = getExtColor(ext);
+              return `
+              <li class="result-row" style="--i:${i}">
+                <span class="result-row__ico" style="color:${color};background:${color}1F">${icon(getExtIcon(ext))}</span>
+                <div class="result-row__body">
+                  <div class="result-name">${escapeHtml(getFileName(p))}</div>
+                  <div class="result-path" title="${escapeHtml(p)}">${escapeHtml(p)}</div>
+                </div>
+                <div class="row-actions">
+                  <button class="btn-secondary compact" onclick="openResultPath(${i})">${icon('external')}打开</button>
+                  <button class="btn-secondary compact" onclick="revealResultPath(${i})">${icon('target')}定位</button>
+                </div>
+              </li>`;
+            }).join('')}
+          </ul>`
+        : emptyState('inbox', '没有生成文件', '请检查源文件内容，或换一种任务重新处理。');
+
+      el.innerHTML = `
+        <div class="page">
+          ${renderStepper(2)}
+          <section class="card state-card ${errorCount > 0 ? 'is-warning' : 'is-success'}">
+            <span class="state-card__ico">${errorCount > 0 ? icon('alert') : icon('checkCircle')}</span>
+            <h1 class="state-card__title">${errorCount > 0 ? '部分完成' : '处理完成'}</h1>
+            <p class="state-card__desc">
+              ${successCount > 0 ? `成功生成 ${successCount} 个文件` : '没有生成任何文件'}
+              ${errorCount > 0 ? `，${errorCount} 个文件失败` : ''}
+            </p>
+            <div class="state-card__stats">
+              <div class="stat"><strong>${successCount}</strong><span>成功</span></div>
+              <div class="stat ${errorCount ? 'stat--danger' : ''}"><strong>${errorCount}</strong><span>失败</span></div>
+              <div class="stat"><strong>${escapeHtml(getTask(safeResult.taskId)?.name || '—')}</strong><span>处理任务</span></div>
+            </div>
+          </section>
+          ${errorHtml}
+          <section class="card">
+            <div class="section-head">
+              <div>
+                <h2>输出文件</h2>
+                <p class="setting-desc">文件已保存到输出目录，可直接打开或定位。</p>
+              </div>
+              <button class="btn-secondary compact" onclick="openOutputFolder()">${icon('folder')}打开文件夹</button>
+            </div>
+            ${resultListHtml}
+          </section>
+          <div class="actions">
+            <button class="btn-secondary" onclick="showPage('outputs')">${icon('list')}查看全部结果</button>
+            <button class="btn" onclick="selectedFiles=[];selectedTask=null;showPage('upload')">${icon('plus')}处理新文件</button>
+          </div>
+        </div>`;
+    }
+
+    async function renderOutputs(el) {
+      el.innerHTML = `
+        <div class="page">
+          <div class="page-head">
+            <div>
+              <h1>结果文件</h1>
+              <p class="page-subtitle">正在读取输出目录…</p>
+            </div>
+          </div>
+          <div class="card">${emptyState('clock', '正在读取输出目录', '稍候片刻，马上就好。')}</div>
+        </div>`;
+      outputFilesCache = await ipcRenderer.invoke('get-output-files');
+      const files = outputFilesCache || [];
+      el.innerHTML = `
+        <div class="page">
+          <div class="page-head">
+            <div>
+              <h1>结果文件</h1>
+              <p class="page-subtitle">${files.length ? `输出目录中共有 ${files.length} 个文件，按修改时间排序。` : '输出目录中的文件会显示在这里。'}</p>
+            </div>
+            <div class="row-actions">
+              <button class="btn-secondary compact" onclick="openOutputFolder()">${icon('folder')}打开文件夹</button>
+              <button class="btn-secondary compact" onclick="showPage('outputs')">${icon('refresh')}刷新</button>
+            </div>
+          </div>
+          <section class="card">
+            ${files.length ? `<ul class="result-list">${files.map((f, i) => {
+              const ext = getFileExt(f.name);
+              const color = getExtColor(ext);
+              return `
+              <li class="result-row" style="--i:${i}">
+                <span class="result-row__ico" style="color:${color};background:${color}1F">${icon(getExtIcon(ext))}</span>
+                <div class="result-row__body">
+                  <div class="result-name">${escapeHtml(f.name)}</div>
+                  <div class="result-path">${escapeHtml(formatBytes(f.size))} · ${escapeHtml(formatDate(f.mtime))}</div>
+                </div>
+                <div class="row-actions">
+                  <button class="btn-secondary compact" onclick="openOutputFile(${i})">${icon('external')}打开</button>
+                  <button class="btn-secondary compact" onclick="revealOutputFile(${i})">${icon('target')}定位</button>
+                </div>
+              </li>`;
+            }).join('')}</ul>`
+              : emptyState('inbox', '还没有输出文件', '处理过的文件会保存在输出目录中，完成后可在这里统一查看。',
+                `<button class="btn" onclick="showPage('upload')">${icon('upload')}去处理文件</button>`)}
+          </section>
+        </div>`;
+    }
+
+    function loadHistory() {
+      try {
+        return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function saveHistory(result) {
+      const entry = {
+        id: Date.now(),
+        time: Date.now(),
+        taskId: result.taskId,
+        taskName: getTask(result.taskId)?.name || result.taskId,
+        files: (result.sourceFiles || []).map(getFileName),
+        results: result.results || [],
+        errors: result.errors || [],
+      };
+      const history = [entry, ...loadHistory()].slice(0, 50);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    }
+
+    function renderHistory(el) {
+      historyCache = loadHistory();
+      el.innerHTML = `
+        <div class="page">
+          <div class="page-head">
+            <div>
+              <h1>历史记录</h1>
+              <p class="page-subtitle">最近 50 次处理记录，仅保存在本机。</p>
+            </div>
+            <button class="btn-secondary compact" onclick="clearHistory()" ${historyCache.length ? '' : 'disabled'}>${icon('trash')}清空</button>
+          </div>
+          <section class="card">
+            ${historyCache.length ? `<ul class="result-list">${historyCache.map((h, i) => {
+              const first = (h.results || [])[0] || '';
+              const ext = getFileExt(first);
+              const color = getExtColor(ext);
+              return `
+              <li class="history-row" style="--i:${i}">
+                <span class="result-row__ico" style="color:${color};background:${color}1F">${taskIcon(h.taskId)}</span>
+                <div class="result-row__body">
+                  <div class="result-name">${escapeHtml(h.taskName)}</div>
+                  <div class="result-path" title="${escapeHtml((h.files || []).join('、'))}">${escapeHtml((h.files || []).join('、'))}</div>
+                </div>
+                <div class="history-row__meta">
+                  <span class="meta-chip">${escapeHtml(formatDate(h.time))}</span>
+                  <span class="meta-chip meta-chip--ok">${(h.results || []).length} 成功</span>
+                  ${(h.errors || []).length ? `<span class="meta-chip meta-chip--danger">${(h.errors || []).length} 失败</span>` : ''}
+                </div>
+                <div class="row-actions">
+                  <button class="btn-secondary compact" onclick="openHistoryFirst(${i})" ${(h.results || []).length ? '' : 'disabled'}>${icon('external')}打开</button>
+                </div>
+              </li>`;
+            }).join('')}</ul>`
+              : emptyState('clock', '还没有历史记录', '完成一次文件处理后，记录会自动出现在这里。',
+                `<button class="btn" onclick="showPage('upload')">${icon('upload')}去处理文件</button>`)}
+          </section>
+        </div>`;
+    }
+
+    async function renderSettings(el) {
+      const settings = await ipcRenderer.invoke('get-app-settings');
+      try {
+        aiSettingsCache = normalizeAiSettings(await ipcRenderer.invoke('get-ai-settings'));
+      } catch (_) {
+        aiSettingsCache = normalizeAiSettings({ error: 'AI 设置暂时不可用' });
+      }
+      const monitorReady = Boolean(settings.backgroundMonitorActive && settings.trayReady);
+      el.innerHTML = `
+        <div class="page">
+          <div class="page-head">
+            <div>
+              <h1>设置</h1>
+              <p class="page-subtitle">后台运行、AI 辅助、输出目录与运行环境都集中在这里管理。</p>
+            </div>
+          </div>
+
+          <section class="card">
+            <div class="card-head">
+              <span class="card-head__ico">${icon('play')}</span>
+              <div>
+                <h2>启动与后台</h2>
+                <p>控制登录启动与后台文件拖放监听。</p>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <h2>开机自启动</h2>
+                <p class="setting-desc">登录 Windows 后仅启动轻量拖放监听，首次拖入文件时再加载主界面。</p>
+              </div>
+              <label class="toggle" title="开机自启动">
+                <input id="launchAtLoginToggle" type="checkbox"
+                  ${settings.launchAtLogin ? 'checked' : ''}
+                  ${settings.launchAtLoginSupported ? '' : 'disabled'}
+                  onchange="toggleLaunchAtLogin(this.checked)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div id="launchAtLoginStatus" class="setting-note">
+              ${settings.launchAtLoginSupported ? '将文件拖到桌面最右侧，悬浮接收窗会自动展开。' : '当前系统不支持此功能。'}
+            </div>
+            <div class="setting-row setting-row--divided">
+              <div>
+                <h2>后台运行</h2>
+                <p class="setting-desc">关闭窗口或按 Alt+F4 后继续监听文件拖放。双击系统托盘图标可重新打开，右键托盘可彻底退出。</p>
+              </div>
+              <span class="status-pill ${monitorReady ? 'is-ok' : 'is-error'}">
+                ${monitorReady ? icon('checkCircle') : icon('alertCircle')}
+                ${monitorReady ? '正在监听' : '后台监听启动异常'}
+              </span>
+            </div>
+            <p class="setting-note">主界面隐藏 ${escapeHtml(settings.idleReleaseSeconds || 30)} 秒后自动释放以降低内存占用。</p>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <span class="card-head__ico">${icon('sparkles')}</span>
+              <div>
+                <h2>AI 辅助整理</h2>
+                <p>默认仅在本地规则无法确定时使用，关闭后所有文档都只在本机处理。</p>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <h2>启用 AI 辅助</h2>
+                <p class="setting-desc">开启后仍只发送本地无法确定的片段，并受下方 Token 预算限制。</p>
+              </div>
+              <label class="toggle" title="AI 辅助总开关">
+                <input id="aiEnabledToggle" type="checkbox" ${aiSettingsCache.enabled ? 'checked' : ''} onchange="saveAiGeneralSettings()">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div class="ai-budget-row">
+              <div class="ai-budget-title"><strong>Token 安全预算</strong><small>达到任一上限即停止 AI，保留本地结果</small></div>
+              <div class="ai-budget-fields">
+                <label for="aiInputTokenLimit"><span>单次输入</span><input id="aiInputTokenLimit" type="number" min="512" max="8000" step="256" value="${aiSettingsCache.inputTokenLimit}"></label>
+                <label for="aiOutputTokenLimit"><span>单次输出</span><input id="aiOutputTokenLimit" type="number" min="128" max="2000" step="128" value="${aiSettingsCache.outputTokenLimit}"></label>
+                <label for="aiDocumentTokenLimit"><span>单文档</span><input id="aiDocumentTokenLimit" type="number" min="1000" max="100000" step="1000" value="${aiSettingsCache.documentTokenLimit}"></label>
+                <label for="aiJobTokenLimit"><span>单任务</span><input id="aiJobTokenLimit" type="number" min="2000" max="200000" step="1000" value="${aiSettingsCache.jobTokenLimit}"></label>
+              </div>
+              <button class="btn-secondary" onclick="saveAiGeneralSettings()">${icon('check')}保存预算</button>
+            </div>
+            <div class="fallback-note">
+              <strong>${icon('shield')}自动回退策略</strong>
+              <span>先调用 DeepSeek V3 兼容入口；只有输出未通过本地结构与来源校验时，才把失败片段交给 DeepSeek V4.1 Flash。不会发送整份文档，也不会重复发送已确认内容。</span>
+              <label class="check-label"><input id="aiFallbackToggle" type="checkbox" ${aiSettingsCache.autoFallback ? 'checked' : ''} onchange="saveAiGeneralSettings()">允许自动回退</label>
+            </div>
+            <div id="aiGeneralStatus" class="setting-note" style="color:${aiSettingsCache.encryptionAvailable ? '' : '#C42B1C'}">${escapeHtml(aiSettingsCache.error || (aiSettingsCache.encryptionAvailable ? '密钥由 Windows 当前用户加密保存，页面不会读取完整内容。' : '当前系统的安全存储不可用，已禁止保存 API Key。'))}</div>
+          </section>
+
+          <div class="provider-grid">
+            ${renderAiProviderCard('deepseek-v3', 'DeepSeek V3 兼容', '主模型 · 用于处理本地无法确定的片段', true)}
+            ${renderAiProviderCard('deepseek-v4-flash', 'DeepSeek V4.1 Flash', '回退模型 · 仅处理 V3 校验失败的片段', false)}
+          </div>
+
+          <section class="card">
+            <div class="card-head">
+              <span class="card-head__ico">${icon('folder')}</span>
+              <div>
+                <h2>输出目录</h2>
+                <p>所有处理结果都保存到这个位置。</p>
+              </div>
+            </div>
+            <div class="settings-path"><span class="settings-path__ico">${icon('folder')}</span><span>${escapeHtml(settings.outputDir)}</span></div>
+            <div class="actions left">
+              <button class="btn-secondary" onclick="chooseOutputDir()">${icon('sliders')}更改目录</button>
+              <button class="btn-secondary" onclick="resetOutputDir()">${icon('refresh')}恢复默认</button>
+              <button class="btn-secondary" onclick="openOutputFolder()">${icon('external')}打开目录</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <span class="card-head__ico">${icon('cpu')}</span>
+              <div>
+                <h2>Python 依赖</h2>
+                <p>文档解析与格式转换依赖本机 Python 环境。</p>
+              </div>
+            </div>
+            <div id="pythonStatus" class="settings-path is-pending"><span class="settings-path__ico">${icon('clock')}</span><span id="pythonStatusText">检查中…</span></div>
+            <div class="actions left">
+              <button class="btn-secondary" onclick="refreshPythonStatus()">${icon('refresh')}重新检查</button>
+              <button class="btn" id="installDepsBtn" onclick="installPythonDeps()">${icon('download')}安装依赖</button>
+            </div>
+          </section>
+
+          <section class="card card--muted">
+            <div class="card-head">
+              <span class="card-head__ico">${icon('info')}</span>
+              <div>
+                <h2>版本</h2>
+                <p>OfficeFlow ${escapeHtml(settings.version || '1.0.0')} · Electron 桌面版</p>
+              </div>
+            </div>
+          </section>
+        </div>`;
+      refreshPythonStatus();
+    }
+
+    function normalizeAiSettings(raw) {
+      const source = raw?.settings || raw || {};
+      const providerSource = source.providers || {};
+      const findProvider = (id, aliases) => {
+        const value = providerSource[id] || aliases.map(alias => providerSource[alias] || source[alias]).find(Boolean) || {};
+        const last4 = String(value.keyLast4 || value.last4 || value.apiKeyLast4 || '').slice(-4);
+        return {
+          configured: Boolean(value.configured || value.hasKey || last4),
+          keyLast4: last4,
+          baseUrl: String(value.baseUrl || ''),
+          modelId: String(value.modelId || value.model || ''),
+          lastTest: value.lastTest || value.testStatus || null,
+        };
+      };
+      const inputTokenLimit = Number(source.inputTokenLimit ?? source.tokenLimit ?? 4000);
+      const outputTokenLimit = Number(source.outputTokenLimit ?? 1200);
+      const documentTokenLimit = Number(source.documentTokenLimit ?? 12000);
+      const jobTokenLimit = Number(source.jobTokenLimit ?? 50000);
+      return {
+        enabled: Boolean(source.enabled ?? source.aiEnabled ?? false),
+        encryptionAvailable: source.encryptionAvailable !== false,
+        tokenLimit: Number.isFinite(inputTokenLimit) ? Math.min(8000, Math.max(512, Math.round(inputTokenLimit))) : 4000,
+        inputTokenLimit: Number.isFinite(inputTokenLimit) ? Math.min(8000, Math.max(512, Math.round(inputTokenLimit))) : 4000,
+        outputTokenLimit: Number.isFinite(outputTokenLimit) ? Math.min(2000, Math.max(128, Math.round(outputTokenLimit))) : 1200,
+        documentTokenLimit: Number.isFinite(documentTokenLimit) ? Math.min(100000, Math.max(1000, Math.round(documentTokenLimit))) : 12000,
+        jobTokenLimit: Number.isFinite(jobTokenLimit) ? Math.min(200000, Math.max(2000, Math.round(jobTokenLimit))) : 50000,
+        autoFallback: Boolean(source.autoFallback ?? true),
+        error: cleanTableMessage(source.error || ''),
+        providers: {
+          'deepseek-v3': findProvider('deepseek-v3', ['deepseek-v3-compatible', 'deepseekV3', 'v3']),
+          'deepseek-v4-flash': findProvider('deepseek-v4-flash', ['deepseekV4Flash', 'v4Flash']),
+        },
+      };
+    }
+
+    function renderAiProviderCard(providerId, title, description, advanced) {
+      const provider = aiSettingsCache?.providers?.[providerId] || {};
+      const configuredText = provider.configured
+        ? `已保存 · •••• ${escapeHtml(provider.keyLast4 || '****')}`
+        : '未配置';
+      const statusClass = provider.configured ? 'configured' : '';
+      const lastTest = provider.lastTest
+        ? `<div class="provider-test-note">${icon('clock')}<span>最近测试：${escapeHtml(cleanTableMessage(provider.lastTest))}</span></div>`
+        : '';
+      return `
+        <section class="card provider-card" data-provider="${providerId}">
+          <div class="provider-title">
+            <div>
+              <h2>${icon('cpu')}${title}</h2>
+              <p>${description}</p>
+            </div>
+            <span class="provider-state ${statusClass}">${provider.configured ? icon('lock') : icon('alertCircle')}${configuredText}</span>
+          </div>
+          <label class="secret-field">
+            <span>API Key</span>
+            <input id="${providerId}-key" type="password" maxlength="512" autocomplete="new-password"
+              placeholder="${provider.configured ? '输入新 Key 可覆盖现有密钥' : '粘贴 API Key'}" spellcheck="false">
+          </label>
+          ${advanced ? `
+            <details class="provider-advanced">
+              <summary>高级连接设置</summary>
+              <label><span>受控 Base URL</span><input id="${providerId}-base-url" type="url" maxlength="300" value="${escapeHtml(provider.baseUrl)}" placeholder="https://api.example.com"></label>
+              <label><span>Model ID</span><input id="${providerId}-model-id" type="text" maxlength="100" value="${escapeHtml(provider.modelId)}" placeholder="服务商提供的模型 ID"></label>
+              <p>Base URL 将由主进程执行 HTTPS、域名和内网地址校验，避免密钥被发送到不安全地址。</p>
+            </details>` : ''}
+          <div id="${providerId}-status" class="provider-status">${lastTest}</div>
+          <div class="provider-actions">
+            <button class="btn" onclick="saveAiProvider('${providerId}')" ${aiSettingsCache?.encryptionAvailable === false ? 'disabled' : ''}>${provider.configured ? '覆盖保存' : '保存密钥'}</button>
+            <button class="btn-secondary" onclick="testAiProvider('${providerId}')">${icon('bolt')}测试连接</button>
+            <button class="btn-secondary danger" onclick="deleteAiProvider('${providerId}')" ${provider.configured ? '' : 'disabled'}>${icon('trash')}删除</button>
+          </div>
+        </section>`;
+    }
+
+    function getProviderForm(providerId) {
+      const keyInput = document.getElementById(`${providerId}-key`);
+      const baseUrlInput = document.getElementById(`${providerId}-base-url`);
+      const modelIdInput = document.getElementById(`${providerId}-model-id`);
+      return {
+        apiKey: String(keyInput?.value || '').trim(),
+        baseUrl: String(baseUrlInput?.value || '').trim(),
+        modelId: String(modelIdInput?.value || '').trim(),
+      };
+    }
+
+    function setProviderStatus(providerId, text, type = '') {
+      const status = document.getElementById(`${providerId}-status`);
+      if (!status) return;
+      status.textContent = text;
+      status.className = `provider-status ${type}`;
+    }
+
+    async function saveAiGeneralSettings() {
+      const enabled = Boolean(document.getElementById('aiEnabledToggle')?.checked);
+      const autoFallback = Boolean(document.getElementById('aiFallbackToggle')?.checked);
+      const clampInput = (id, fallback, min, max) => {
+        const value = Number(document.getElementById(id)?.value ?? fallback);
+        return Math.min(max, Math.max(min, Number.isFinite(value) ? Math.round(value) : fallback));
+      };
+      const inputTokenLimit = clampInput('aiInputTokenLimit', 4000, 512, 8000);
+      const outputTokenLimit = clampInput('aiOutputTokenLimit', 1200, 128, 2000);
+      const documentTokenLimit = clampInput('aiDocumentTokenLimit', 12000, 1000, 100000);
+      const jobTokenLimit = clampInput('aiJobTokenLimit', 50000, 2000, 200000);
+      const status = document.getElementById('aiGeneralStatus');
+      if (status) {
+        status.textContent = '正在保存...';
+        status.style.color = '#605E5C';
+      }
+      try {
+        const result = await ipcRenderer.invoke('save-ai-provider', {
+          providerId: 'general', provider: 'general', enabled, aiEnabled: enabled, autoFallback,
+          inputTokenLimit, outputTokenLimit, documentTokenLimit, jobTokenLimit,
+        });
+        if (!result?.ok) throw new Error(result?.error || 'AI 设置保存失败');
+        aiSettingsCache = normalizeAiSettings(result.settings || result || {
+          ...aiSettingsCache, enabled, autoFallback, inputTokenLimit, outputTokenLimit, documentTokenLimit, jobTokenLimit,
+        });
+        if (status) {
+          status.textContent = 'AI 设置已保存。';
+          status.style.color = '#107C10';
+        }
+      } catch (error) {
+        if (status) {
+          status.textContent = cleanTableMessage(error, 'AI 设置保存失败');
+          status.style.color = '#D13438';
+        }
+      }
+    }
+
+    async function saveAiProvider(providerId) {
+      const form = getProviderForm(providerId);
+      const existing = aiSettingsCache?.providers?.[providerId]?.configured;
+      if (!form.apiKey && !existing) {
+        setProviderStatus(providerId, '请输入 API Key。', 'error');
+        return;
+      }
+      setProviderStatus(providerId, '正在加密保存...');
+      try {
+        const payload = { providerId, provider: providerId };
+        if (form.apiKey) payload.apiKey = form.apiKey;
+        if (providerId === 'deepseek-v3') {
+          payload.baseUrl = form.baseUrl;
+          payload.modelId = form.modelId;
+        }
+        const result = await ipcRenderer.invoke('save-ai-provider', payload);
+        form.apiKey = '';
+        const keyInput = document.getElementById(`${providerId}-key`);
+        if (keyInput) keyInput.value = '';
+        if (!result?.ok) throw new Error(result?.error || '密钥保存失败');
+        setProviderStatus(providerId, '已使用 Windows 用户凭据加密保存。', 'success');
+        await reloadAiSettingsView();
+      } catch (error) {
+        const keyInput = document.getElementById(`${providerId}-key`);
+        if (keyInput) keyInput.value = '';
+        setProviderStatus(providerId, cleanTableMessage(error, '密钥保存失败'), 'error');
+      }
+    }
+
+    async function testAiProvider(providerId) {
+      const form = getProviderForm(providerId);
+      setProviderStatus(providerId, '正在测试模型连接...');
+      try {
+        const payload = { providerId, provider: providerId };
+        if (form.apiKey) payload.apiKey = form.apiKey;
+        if (providerId === 'deepseek-v3') {
+          payload.baseUrl = form.baseUrl;
+          payload.modelId = form.modelId;
+        }
+        const result = await ipcRenderer.invoke('test-ai-provider', payload);
+        if (!result?.ok) throw new Error(result?.error || '连接测试失败');
+        const latency = Number(result.latencyMs || result.latency);
+        setProviderStatus(providerId, `连接可用${Number.isFinite(latency) ? ` · ${Math.round(latency)} ms` : ''}`, 'success');
+      } catch (error) {
+        setProviderStatus(providerId, cleanTableMessage(error, '连接测试失败'), 'error');
+      } finally {
+        const keyInput = document.getElementById(`${providerId}-key`);
+        if (keyInput) keyInput.value = '';
+      }
+    }
+
+    async function deleteAiProvider(providerId) {
+      if (!confirm('确定删除这个模型保存的 API Key 吗？此操作无法撤销。')) return;
+      setProviderStatus(providerId, '正在删除...');
+      try {
+        const result = await ipcRenderer.invoke('delete-ai-provider', { providerId, provider: providerId });
+        if (!result?.ok) throw new Error(result?.error || '删除失败');
+        await reloadAiSettingsView();
+      } catch (error) {
+        setProviderStatus(providerId, cleanTableMessage(error, '删除失败'), 'error');
+      }
+    }
+
+    async function reloadAiSettingsView() {
+      try { aiSettingsCache = normalizeAiSettings(await ipcRenderer.invoke('get-ai-settings')); } catch (_) {}
+      if (currentPage === 'settings') renderSettings(document.getElementById('content'));
+    }
+
+    async function toggleLaunchAtLogin(enabled) {
+      const toggle = document.getElementById('launchAtLoginToggle');
+      const status = document.getElementById('launchAtLoginStatus');
+      if (toggle) toggle.disabled = true;
+      const result = await ipcRenderer.invoke('set-launch-at-login', enabled);
+      if (toggle) {
+        toggle.checked = Boolean(result.enabled);
+        toggle.disabled = false;
+      }
+      if (status) {
+        status.textContent = result.ok
+          ? (result.enabled ? '已开启：下次登录 Windows 时将在后台启动。' : '已关闭开机自启动。')
+          : (result.error || '开机启动设置保存失败。');
+        status.style.color = result.ok ? '#107C10' : '#D13438';
+      }
+    }
+
+    function setPythonStatus(state, text) {
+      const el = document.getElementById('pythonStatus');
+      if (!el) return;
+      el.classList.remove('is-ok', 'is-error', 'is-pending');
+      el.classList.add(state);
+      const iconHost = el.querySelector('.settings-path__ico');
+      if (iconHost) iconHost.innerHTML = icon(state === 'is-ok' ? 'checkCircle' : state === 'is-error' ? 'alertCircle' : 'clock');
+      const label = document.getElementById('pythonStatusText');
+      if (label) label.textContent = text;
+      else el.textContent = text;
+    }
+
+    async function refreshPythonStatus() {
+      setPythonStatus('is-pending', '检查中…');
+      const status = await ipcRenderer.invoke('check-python-deps');
+      if (status.ok) {
+        setPythonStatus('is-ok', `已就绪 · ${status.command || 'python'}`);
+      } else {
+        setPythonStatus('is-error', `${status.error || '依赖未就绪'} · requirements.txt`);
+      }
+    }
+
+    async function installPythonDeps() {
+      const btn = document.getElementById('installDepsBtn');
+      if (btn) btn.disabled = true;
+      setPythonStatus('is-pending', '正在安装…');
+      const result = await ipcRenderer.invoke('install-python-deps');
+      if (result.ok) setPythonStatus('is-ok', '安装完成，正在重新检查…');
+      else setPythonStatus('is-error', result.error || '安装失败');
+      if (btn) btn.disabled = false;
+      await refreshPythonStatus();
+    }
+
+    async function chooseOutputDir() {
+      await ipcRenderer.invoke('set-output-dir');
+      showPage('settings');
+    }
+
+    async function resetOutputDir() {
+      await ipcRenderer.invoke('reset-output-dir');
+      showPage('settings');
+    }
+
+    async function openOutputFolder() {
+      await ipcRenderer.invoke('open-output-folder');
+    }
+
+    async function openResultPath(index) {
+      const path = latestResult?.results?.[index];
+      if (path) await ipcRenderer.invoke('open-path', path);
+    }
+
+    async function revealResultPath(index) {
+      const path = latestResult?.results?.[index];
+      if (path) await ipcRenderer.invoke('show-item-in-folder', path);
+    }
+
+    async function openOutputFile(index) {
+      const path = outputFilesCache?.[index]?.path;
+      if (path) await ipcRenderer.invoke('open-path', path);
+    }
+
+    async function revealOutputFile(index) {
+      const path = outputFilesCache?.[index]?.path;
+      if (path) await ipcRenderer.invoke('show-item-in-folder', path);
+    }
+
+    async function openHistoryFirst(index) {
+      const path = historyCache?.[index]?.results?.[0];
+      if (path) await ipcRenderer.invoke('open-path', path);
+    }
+
+    function clearHistory() {
+      localStorage.removeItem(HISTORY_KEY);
+      renderHistory(document.getElementById('content'));
+    }
+
+    ipcRenderer.on('external-files-dropped', (event, files) => {
+      if (!Array.isArray(files) || files.length === 0 || isProcessing || tableState.busyOperation) return;
+      selectedFiles = dedupeFiles(files);
+      selectedTask = null;
+      showPage('tasks');
+    });
+
+    hydrateIcons();
+    showPage('home');
+    /* 窗口尺寸变化会改变侧栏宽度（900px 断点），指示条跟着重新对位 */
+    window.addEventListener('resize', moveNavIndicator);
+  </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OfficeFlow 文件接收</title>
+  <link rel="stylesheet" href="drop-overlay.css">
+</head>
+<body>
+  <main class="drop-panel" aria-live="polite">
+    <header class="panel-header">
+      <span class="panel-brand">
+        <span class="panel-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z" />
+            <path d="M13.5 3.5V9H19" />
+            <path d="M8.5 13h7M8.5 16.5h4.5" />
+          </svg>
+        </span>
+        OfficeFlow
+      </span>
+      <span class="panel-context">文件处理</span>
+    </header>
+    <section class="drop-content">
+      <span class="drop-ico" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7 17.5a4.5 4.5 0 0 1-.6-8.96A5.5 5.5 0 0 1 17.3 8.2a4.15 4.15 0 0 1-.5 8.3" />
+          <path d="M12 20.5v-9" />
+          <path d="M8.8 14.6 12 11.4l3.2 3.2" />
+        </svg>
+      </span>
+      <div class="drop-kicker">拖放接收区</div>
+      <h1>将文件拖到这里</h1>
+      <p id="dropStatus">松开后自动进入文件处理页面</p>
+      <div class="file-hint">支持 Word / Excel / PDF / PPT / 图片</div>
+    </section>
+  </main>
+  <script src="drop-overlay.js"></script>
+</body>
+</html>
