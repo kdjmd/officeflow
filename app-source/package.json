@@ -30,7 +30,7 @@
     "test:release": "node ../qa/run-release-smoke.js"
   },
   "devDependencies": {
-    "electron": "44.7.0",
+    "electron": "45.1.0",
     "electron-builder": "26.15.3"
   },
   "build": {
