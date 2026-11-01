@@ -1,4 +1,4 @@
-pypdf==6.19.0
+pypdf==6.21.4
 reportlab==4.5.1
 Pillow==12.3.0
 PyMuPDF==1.28.2
